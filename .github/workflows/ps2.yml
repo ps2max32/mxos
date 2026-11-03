@@ -1,0 +1,38 @@
+# .github/workflows/ps2.yml of ps2max32/mxlink, the PS2's loader.
+# Every push and PR: build MXLINK.ELF (to install) and mxlink-high.elf (to
+# try a build from a running loader) with ghcr.io/ps2max32/ps2max, the IOP
+# module (iop/) with the image's IOP gcc; both as an artifact. A tag v*:
+# also a GitHub release with them.
+name: ps2
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: ghcr.io/ps2max32/ps2max:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make -j$(nproc) OUT=$PWD/out all high
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mxlink-${{ github.sha }}
+          path: |
+            out/MXLINK.ELF
+            out/mxlink-high.elf
+          if-no-files-found: error
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk add --no-cache github-cli
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes \
+            out/MXLINK.ELF out/mxlink-high.elf
