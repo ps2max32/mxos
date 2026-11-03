@@ -62,5 +62,13 @@ void exec_kill(void);
 /* the restart (main.c): the IOP reset and mxlink started again, as ps2link
    does on a reset command */
 void mxlink_restart(void) __attribute__((noreturn));
+/* a program's return (<mx/loader.h>'s ret): mxlink started again, the IOP
+   kept when the program left it as it was */
+void mxlink_return(int status) __attribute__((noreturn));
+/* the path of the program started, for the screen after its return */
+void exec_started(const char *path);
+/* programs returned to mxlink since it booted, the last one's exit status */
+u32 exec_returns(void);
+s32 exec_last_status(void);
 
 #endif

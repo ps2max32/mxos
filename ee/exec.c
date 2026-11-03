@@ -96,7 +96,11 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   }
   set_args(argc < 1 ? 1 : argc, args, args_len);
   const char *path = largs.args.argv[0];
-  con_log(CON_WHITE, "exec %s", path);
+  if (exec_returns())
+    con_log(CON_WHITE, "exec %s (%u returned before, the last with status %d)", path,
+            exec_returns(), (int)exec_last_status());
+  else
+    con_log(CON_WHITE, "exec %s", path);
 
   static struct ehdr eh;
   static struct phdr ph[MAX_PHDRS];
@@ -190,6 +194,11 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   /* ps2link: the address of the thread id; programs with VM segments:
      MX_LOADER_MAGIC, so maxsdk's start-up reads them */
   largs.pid = vm ? MX_LOADER_MAGIC : (u32)(uintptr_t)&user_tid;
+  /* the way back for maxsdk programs: only from the resident mxlink (below
+     the programs; mxlink-high is in their memory) */
+  largs.ret_magic = self_end <= LOW ? MX_LOADER_RET : 0;
+  largs.ret = mxlink_return;
+  exec_started(path);
 
   status_state(ST_RUNNING, path);
   /* from here the program owns the IOP's SIF replies and the screen: the

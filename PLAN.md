@@ -16,7 +16,14 @@ monitor that programs return to without a reboot (option 2 of the
    running ps2link (`execee`) for tests without installing it.
    Checked on PCSX2: start, ExecPS2 restart, IOP reset, IOP modules up to
    SMAP (PCSX2 has no network), the console (`make SHOT=1`).
-2. **Return without a reboot.** Hook syscall 4 (Exit) with SetSyscall, and
+2. **Return without a reboot.** Done for maxsdk programs (2026-11-03, on
+   the PS2: hello, a VM program, a crash, about 3 s from one run to the
+   next): mxlink passes ret_magic/ret after ps2link's argument block
+   (<mx/loader.h>), mx_exit calls it, mxlink restarts by ExecPS2 and keeps
+   the IOP unless the program loaded modules (mx_iop_last_module). Still
+   to do: ps2sdk programs and older maxsdk ones (the BIOS's Exit, syscall
+   4, with SetSyscall), DMA/VU state checks, exceptions of ps2sdk programs.
+   The plan as it was: Hook syscall 4 (Exit) with SetSyscall, and
    give maxsdk programs a return address in the argument block; on return
    ExecPS2 mxlink itself (the kernel drops the program's threads, semaphores
    and handlers; memory stays), then restore the SIF (CHANGE_SADDR to

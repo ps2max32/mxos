@@ -26,6 +26,14 @@ static char if_conf[CONF_MAX] __attribute__((section(".data")));
 static u32 if_conf_len __attribute__((section(".data"))) = 0;
 static char boot_path[256] __attribute__((section(".data")));
 static u32 restarts __attribute__((section(".data"))) = 0;
+/* the program's return (mxlink_return): its path and exit status, and the
+   IOP's highest module id after mxlink's modules (a higher one after the
+   program: it loaded modules, the IOP is reset) */
+static char last_path[256] __attribute__((section(".data")));
+static u32 returned __attribute__((section(".data"))) = 0;
+static s32 last_status __attribute__((section(".data"))) = 0;
+static s32 iop_last __attribute__((section(".data"))) = 0;
+static u32 returns __attribute__((section(".data"))) = 0; /* programs returned so far */
 
 #define DEFAULT_IP "192.168.1.10"
 #define DEFAULT_NETMASK "255.255.255.0"
@@ -134,6 +142,27 @@ void mxlink_restart(void) {
   restart();
 }
 
+u32 exec_returns(void) { return returns; }
+s32 exec_last_status(void) { return last_status; }
+
+void exec_started(const char *path) {
+  u32 n = strlen(path);
+  if (n >= sizeof last_path)
+    n = sizeof last_path - 1;
+  memcpy(last_path, path, n);
+  last_path[n] = 0;
+}
+
+/* A program's way back (<mx/loader.h>: maxsdk's mx_exit calls it): runs in
+   the program, so only this file's .data and a BIOS call. The restart's
+   ExecPS2 drops the program's threads, semaphores and handlers. */
+void mxlink_return(int status) {
+  returned = 1;
+  returns++;
+  last_status = status;
+  restart();
+}
+
 static int load(const char *name, const u8 *start, const u8 *end, const char *args, u32 args_len) {
   int res = 0;
   int id = mx_iop_load_module_buffer(start, (u32)(end - start), args, args_len, &res);
@@ -144,7 +173,20 @@ static int load(const char *name, const u8 *start, const u8 *end, const char *ar
   return 0;
 }
 
+/* After a program: the IOP as mxlink left it (ps2link.irx there, no module
+   loaded since)? Then it stays, and the network with it: no reset. */
+static int iop_kept(void) {
+  if (!returned || !iop_last || mx_sif_init() < 0)
+    return 0;
+  struct mx_iop_module m;
+  return mx_iop_last_module() == iop_last && mx_iop_find_module("ps2link", &m) > 0;
+}
+
 static int boot_iop(void) {
+  if (iop_kept())
+    return 0;
+  if (returned)
+    con_log(CON_GREY, "the program changed the IOP: reset");
   status_state(ST_BOOT, "IOP reset");
   if (mx_iop_reset("") < 0) {
     con_log(CON_RED, "the IOP did not come back from its reset");
@@ -165,6 +207,7 @@ static int boot_iop(void) {
   LOAD(ioptrap, 0, 0)
   LOAD(ps2link, 0, 0)
 #undef LOAD
+  iop_last = mx_iop_last_module();
   return 0;
 }
 
@@ -189,6 +232,9 @@ static void screen(void) {
   con_line(ROW_MEM, CON_WHITE, "Memory: mxlink %05x-%05x, programs 00100000-%08x",
            (u32)(uintptr_t)__text_start, (u32)(uintptr_t)_end, mx_bios_get_memory_size());
   con_line(ROW_HELP, CON_GREY, "ps2client -h %s execee host:<elf> [args]", ip);
+  if (last_path[0])
+    con_line(ROW_LAST, last_status ? CON_RED : CON_WHITE, "Last:   %s, exit status %d", last_path,
+             (int)last_status);
 }
 
 int main(int argc, char **argv) {
@@ -217,6 +263,10 @@ int main(int argc, char **argv) {
     con_log(CON_RED, "the command thread did not start");
     stopped();
   }
+  if (returned)
+    con_log(last_status ? CON_RED : CON_GREEN, "%s returned, exit status %d", last_path,
+            (int)last_status);
+  returned = 0;
   con_log(CON_GREEN, "mxlink %s ready", MXLINK_VERSION);
   status_state(ST_READY, 0);
   /* the main thread ends; the command thread serves */
