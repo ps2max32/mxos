@@ -1,0 +1,66 @@
+#ifndef MXLINK_H
+#define MXLINK_H
+
+/* mxlink: the EE side of the PS2 loader and monitor, on maxsdk. It talks to
+   ps2client through ps2link's IOP module (ps2link.irx) and protocol, and
+   loads programs itself, those linked into maxsdk's VM too. */
+
+#include <mx/types.h>
+
+#define MXLINK_VERSION "0.1"
+
+/* ---- the console (con.c): the status screen ----------------------------- */
+
+/* 640 x 448 (NTSC) or 512 (PAL): characters 7.5 pixels wide (con.c),
+   rows of 18 lines; con_rows rows (24, 28), CON_ROWS at most */
+#define CON_COLS 84
+#define CON_ROWS 28
+extern u32 con_rows;
+
+#define CON_WHITE 0xE0E0E0
+#define CON_GREY 0x808080
+#define CON_GREEN 0x60E060
+#define CON_YELLOW 0x40E0E0
+#define CON_RED 0x6060FF
+#define CON_CYAN 0xE0E060
+
+extern const u8 con_font[95][5];
+
+/* Set up the GS and the screen (640 x 448 NTSC, 640 x 512 PAL, interlaced).
+   Thread code. */
+void con_init(void);
+/* Text at (col, row) in colour 0xBBGGRR; the rest of the row is not
+   touched. */
+void con_text(u32 col, u32 row, u32 rgb, const char *s);
+/* Row row cleared, then text formatted as mx_printf. */
+void con_line(u32 row, u32 rgb, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+/* The event log at the bottom of the screen: one line more, scrolled; also
+   on the debug output when it is safe (no program running). */
+void con_log(u32 rgb, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+
+/* ---- the status screen (main.c) ---------------------------------------- */
+
+enum { ST_BOOT, ST_READY, ST_RUNNING };
+void status_state(int state, const char *what);
+int status_get(void);
+
+/* ---- commands from the host (cmd.c) ------------------------------------ */
+
+int cmd_init(void);
+
+/* ---- programs (exec.c) -------------------------------------------------- */
+
+/* Load the ELF at path and start it in a thread of its own with the
+   arguments (argc strings, one after the other in args, argv[0] the path).
+   Returns 0, < 0 with the reason on the console. */
+int exec_elf(int argc, const char *args, u32 args_len);
+/* 1 while a program runs */
+int exec_running(void);
+/* Stop the running program (its thread). */
+void exec_kill(void);
+
+/* the restart (main.c): the IOP reset and mxlink started again, as ps2link
+   does on a reset command */
+void mxlink_restart(void) __attribute__((noreturn));
+
+#endif
