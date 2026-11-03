@@ -40,12 +40,16 @@ irx_path = $(if $(filter ps2link,$(1)),$(PS2LINK_IRX),$(PS2MAX_IRX)/$(if $(filte
 LOW_LDFLAGS  = --defsym=__mx_base=0x94000 --defsym=__mx_top=0xFF800 --defsym=__mx_stack_size=0x4000
 HIGH_LDFLAGS = --defsym=__mx_base=0x1E00000 --defsym=__mx_top=0x1F00000 --defsym=__mx_stack_size=0x4000
 
-OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/irx.o
+OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/hook.o $(OUT)/obj/irx.o
 
 all: $(OUT)/MXLINK.ELF
 high: $(OUT)/mxlink-high.elf
 
 $(OUT)/obj/%.o: ee/%.c ee/mxlink.h $(MX_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/obj/hook.o: ee/hook.S
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 

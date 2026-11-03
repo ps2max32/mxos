@@ -198,6 +198,9 @@ int exec_elf(int argc, const char *args, u32 args_len) {
      the programs; mxlink-high is in their memory) */
   largs.ret_magic = self_end <= LOW ? MX_LOADER_RET : 0;
   largs.ret = mxlink_return;
+  /* and for the others (ps2sdk's, older maxsdk ones): their Exit */
+  if (self_end <= LOW)
+    mx_bios_set_syscall(4, mxlink_exit_hook);
   exec_started(path);
 
   status_state(ST_RUNNING, path);

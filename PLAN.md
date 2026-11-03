@@ -20,10 +20,12 @@ monitor that programs return to without a reboot (option 2 of the
    the PS2: hello, a VM program, a crash, about 3 s from one run to the
    next): mxlink passes ret_magic/ret after ps2link's argument block
    (<mx/loader.h>), mx_exit calls it, mxlink restarts by ExecPS2 and keeps
-   the IOP unless the program loaded modules (mx_iop_last_module). Still
-   to do: ps2sdk programs and older maxsdk ones (the BIOS's Exit, syscall
-   4, with SetSyscall), DMA/VU state checks, exceptions of ps2sdk programs.
-   The plan as it was: Hook syscall 4 (Exit) with SetSyscall, and
+   the IOP unless the program loaded modules (mx_iop_last_module). The
+   others (ps2sdk's, older maxsdk ones): syscall 4 (the BIOS's Exit)
+   replaced (ee/hook.S, Open PS2 Loader's way), checked with a plain exit,
+   a module loaded, the IOP reset by the program: back in a little over
+   4 s with an IOP reset. Still to do: exceptions of ps2sdk programs, DMA/VU
+   state checks. The plan as it was: Hook syscall 4 (Exit) with SetSyscall, and
    give maxsdk programs a return address in the argument block; on return
    ExecPS2 mxlink itself (the kernel drops the program's threads, semaphores
    and handlers; memory stays), then restore the SIF (CHANGE_SADDR to

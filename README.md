@@ -16,13 +16,15 @@ What it adds to ps2link:
 - A status screen: the network, the boot path, mxlink's memory, the state,
   and a log of the commands and errors (soft-edged text, 640 x 448 NTSC,
   640 x 512 PAL).
-- maxsdk programs (built since maxsdk 8f9a72f) return to mxlink when they
-  end, crash reports included: no reboot, the IOP and the network kept
-  unless the program loaded IOP modules. The screen shows the last program
-  and its exit status.
+- Programs return to mxlink when they end: no reboot, the IOP and the
+  network kept unless the program loaded IOP modules or reset the IOP (then
+  mxlink resets it: a little over 4 s). maxsdk's `mx_exit` calls mxlink's
+  return function (since maxsdk 8f9a72f; crash reports too); the BIOS's Exit
+  is replaced for the others, ps2sdk's and older maxsdk ones (`ee/hook.S`).
+  The screen shows the last program and its exit status.
 
-Not yet (PLAN.md): the same for ps2sdk programs (their exit still reboots
-the PS2), the protocol extensions, the VU register dumps.
+Not yet (PLAN.md): catching crashes of ps2sdk programs, the protocol
+extensions, the VU register dumps.
 
 ## Build
 
