@@ -201,8 +201,8 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   /* and for the others (ps2sdk's, older maxsdk ones): their Exit */
   if (self_end <= LOW)
     mx_bios_set_syscall(4, mxlink_exit_hook);
-  exec_started(path);
 
+  exec_started(path);
   status_state(ST_RUNNING, path);
   /* from here the program owns the IOP's SIF replies and the screen: the
      debug output to the serial port only (con_log) */

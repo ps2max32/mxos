@@ -11,6 +11,7 @@
    ExecPS2. */
 
 #include <mx/bios.h>
+#include <mx/cpu.h>
 #include <mx/debug.h>
 #include <mx/gs.h>
 #include <mx/iop.h>
@@ -57,8 +58,36 @@ static int state = ST_BOOT;
 
 int status_get(void) { return state; }
 
+/* the IOP's status record (iop/cmdHandler.c), which answers ps2client's
+   status: over its RPC server, so not while a program runs (it has the SIF
+   replies): set before it starts and when mxlink is ready again */
+#define NPM_SID 0x014d704eu
+#define NPM_STATUS 2
+static struct {
+  u32 state, returns;
+  s32 last_status;
+  char path[256];
+  u32 pad; /* a multiple of 16 bytes */
+} iop_status MX_DMA_LINES;
+
+static void iop_status_send(u32 st) {
+  static struct mx_sif_client npm;
+  static u32 answer[4] MX_DMA_LINES;
+  if (!mx_sif_bound(&npm) && mx_sif_bind_tries(&npm, NPM_SID, 3) < 0)
+    return;
+  iop_status.state = st;
+  iop_status.returns = returns;
+  iop_status.last_status = last_status;
+  memcpy(iop_status.path, last_path, sizeof iop_status.path);
+  mx_sif_call(&npm, NPM_STATUS, &iop_status, sizeof iop_status, (void *)MX_UNCACHED(answer), 0);
+}
+
 void status_state(int st, const char *what) {
   state = st;
+  if (st == ST_READY)
+    iop_status_send(1);
+  else if (st == ST_RUNNING)
+    iop_status_send(2);
   switch (st) {
   case ST_BOOT:
     con_line(ROW_STATE, CON_YELLOW, "State:  starting - %s", what);

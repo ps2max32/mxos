@@ -23,8 +23,12 @@ What it adds to ps2link:
   is replaced for the others, ps2sdk's and older maxsdk ones (`ee/hook.S`).
   The screen shows the last program and its exit status.
 
-Not yet (PLAN.md): catching crashes of ps2sdk programs, the protocol
-extensions, the VU register dumps.
+- `ps2client status` says what it is doing (state, program, programs
+  returned, last exit status). The IOP module answers it alone, so it is
+  safe while a program runs, unlike `ping`.
+
+Not yet (PLAN.md): catching crashes of ps2sdk programs, a "return to mxlink"
+command, the VU register dumps.
 
 ## Build
 

@@ -33,9 +33,14 @@ monitor that programs return to without a reboot (option 2 of the
    program changed it (its module list against the one at the start).
    Catch exceptions of ps2sdk programs: report on screen and to the host,
    back to the monitor.
-3. **Protocol extensions** (versioned, old commands unchanged): a status
-   query that does not cut off a running program's files, "return to
-   monitor", the exit status as a packet, a GS screenshot. Changes to
+3. **Protocol extensions.** Done (2026-11-03): `ps2client status`, a UDP
+   query the IOP module answers alone from a record mxlink sets over the
+   nprintf RPC server when a program starts and when it is ready: state,
+   program, returns, last exit status. It touches neither the EE nor the
+   host: connection, so it is safe during a run, and the runner asks it
+   instead of waiting a fixed time (a run: 0.7 s). Still open: "return to
+   monitor" as a command, a GS screenshot, several host connections. As
+   planned: Changes to
    mxlink's IOP module (iop/: several host connections in net_fsys.c). Then the
    hw-test runner without its reboot wait.
 4. U2 (pad launcher, file browser, log, crash screen) and U3 (host TUI)
