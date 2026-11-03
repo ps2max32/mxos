@@ -16,7 +16,6 @@ What it adds to ps2link:
 - A status screen: the network, the boot path, mxlink's memory, the state,
   and a log of the commands and errors (soft-edged text, 640 x 448 NTSC,
   640 x 512 PAL).
-
 - maxsdk programs (built since maxsdk 8f9a72f) return to mxlink when they
   end, crash reports included: no reboot, the IOP and the network kept
   unless the program loaded IOP modules. The screen shows the last program
