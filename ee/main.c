@@ -311,8 +311,8 @@ static int iop_kept(void) {
 static struct mx_sif_client pad_rpc, snd_rpc;
 static s32 rpc_cmd[32] MX_DMA_LINES, rpc_res[32] MX_DMA_LINES;
 
-/* audsrv stays: its play thread runs on for the next program, the stream muted
-   and the samples stopped. (AUDSRV_QUIT would end that thread for good: a
+/* audsrv stays: its play thread runs on for the next program, with the stream
+   muted. (AUDSRV_QUIT would end that thread for good: a
    later AUDSRV_INIT does nothing.) */
 static void sound_off(void) {
   if (mx_sif_bind_tries(&snd_rpc, AUDSRV_SID, 2) < 0 || !snd_rpc.server)
@@ -323,6 +323,13 @@ static void sound_off(void) {
     a[0] = a[1] = a[2] = a[3] = 0;
     mx_sif_call(&snd_rpc, calls[i], (void *)a, 16, (void *)MX_UNCACHED(rpc_res), 4);
   }
+  /* neither stops a voice that is playing: the chime's quiet mode does */
+  int fd = module_open(M_CHIME), size = fd < 0 ? -1 : mx_fio_lseek(fd, 0, MX_FIO_SEEK_END);
+  if (size > 0 && mx_fio_lseek(fd, 0, MX_FIO_SEEK_SET) == 0 &&
+      mx_fio_read(fd, MODULE_MEM, (u32)size) == size)
+    mx_iop_load_module_buffer(MODULE_MEM, (u32)size, "-q", 3, &chime);
+  if (fd >= 0)
+    mx_fio_close(fd);
 }
 
 static void iop_cleanup(void) {

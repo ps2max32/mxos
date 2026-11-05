@@ -159,10 +159,25 @@ static void play(void) {
   KON(1) = 1;
 }
 
+/* With an argument, for a program that ended with the IOP kept: only its
+   voices stop. audsrv goes on using the SPU2's DMA. */
+static void voices_off(void) {
+  for (int c = 0; c < 2; c++) {
+    KOFF_HI(c) = 0xFFFF;
+    KOFF_LO(c) = 0xFF;
+    for (int v = 0; v < VOICES; v++)
+      VOLL(c, v) = VOLR(c, v) = 0;
+  }
+}
+
 int _start(int argc, char **argv) {
-  (void)argc, (void)argv;
+  (void)argv;
   ssbus();
   u32 report = seen();
+  if (argc > 1) {
+    voices_off();
+    return (int)report | MODULE_NO_RESIDENT_END;
+  }
   silence();
   setup();
   upload();

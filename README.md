@@ -27,8 +27,9 @@ What it adds to ps2link:
 - A short boot sound (`iop/chime.c`), after every IOP reset: at boot, and
   when a program that loaded IOP modules returns. It resets the SPU2 first
   (the IOP's reset alone leaves the SPU2 playing). A return with the IOP kept
-  makes no sound: audsrv stops the stream and the samples, and stays running
-  for the next program. The module does not stay on the IOP.
+  makes no sound: audsrv mutes the stream and stays running for the next
+  program, and the chime's quiet mode stops the voices. The module does not
+  stay on the IOP.
 - `ps2client status` says what it is doing (state, program, programs
   returned, last exit status) and which PS2 it is on: its model
   (`SCPH-70004`) and `rom0:ROMVER`, each `unknown` if the PS2 does not say.
