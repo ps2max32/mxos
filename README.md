@@ -27,8 +27,12 @@ What it adds to ps2link:
   the SPU2 playing). A return with the IOP kept makes no sound; a program
   needs IOP modules to play anything. The module does not stay on the IOP.
 - `ps2client status` says what it is doing (state, program, programs
-  returned, last exit status). The IOP module answers it alone, so it is
-  safe while a program runs, unlike `ping`.
+  returned, last exit status) and which PS2 it is on: its model
+  (`SCPH-70004`) and `rom0:ROMVER`, each `unknown` if the PS2 does not say.
+  The model is the name stored in the PS2, read from its CD/DVD controller;
+  older controllers (below version 0x10500) are not asked, as with ps2sdk's
+  `sceCdRM`. The IOP module answers it alone, so it is safe while a program
+  runs, unlike `ping`.
 
 Not yet: catching crashes of ps2sdk programs, a "return to mxlink"
 command, the VU register dumps.
