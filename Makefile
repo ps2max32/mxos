@@ -5,12 +5,15 @@
 #                   boot from the PS2's storage)
 #   make high       build/tools/mxlink/mxlink-high.elf (at 0x1E00000: to start
 #                   with ps2client execee from a running ps2link, for tests)
+#   make IOP_CLANG=1 ...
+#                   the same in build/tools/mxlink-clang, with the IOP modules
+#                   compiled by clang instead of ps2dev's IOP gcc
 
 # the default goal, before maxsdk.mk's rules
 all:
 
 PS2MAX  ?= $(abspath $(CURDIR)/../..)
-OUT     ?= $(PS2MAX)/build/tools/mxlink
+OUT     ?= $(PS2MAX)/build/tools/mxlink$(if $(IOP_CLANG),-clang)
 # the IOP side from ps2dev (envsetup.sh): the IOP gcc, ps2sdk's IOP headers,
 # link script and iopfixup, and its prebuilt IOP modules
 PS2MAX_PS2DEV  ?= $(abspath $(PS2MAX)/../ps2dev/install)
@@ -81,6 +84,16 @@ IOP_STRIP  = $(PS2MAX_IOP_BIN)/mipsel-none-elf-strip
 # byte for byte the one of ps2link's own build (it changes the code a little)
 IOP_CFLAGS = -D_IOP -fno-builtin -G0 -Os -Wall -Werror -gdwarf-2 -gz -msoft-float -mno-explicit-relocs \
              -I$(PS2MAX_IOP_SDK)/iop/include -I$(PS2MAX_IOP_SDK)/common/include -Iiop
+IOP_IMPORT_CFLAGS = -fno-toplevel-reorder
+# the linker stays ps2dev's: ld.lld does not take ps2sdk's link script
+IOP_LD     = $(PS2MAX_IOP_BIN)/mipsel-none-elf-gcc
+ifdef IOP_CLANG
+IOP_CC     = $(LLVM)/clang --target=mipsel-none-elf -mcpu=r3000a
+IOP_CFLAGS = -D_IOP -fno-builtin -ffreestanding -G0 -Os -Wall -Werror -Wno-unused-but-set-global \
+             -msoft-float -mno-abicalls -fno-pic -fno-unwind-tables -fno-asynchronous-unwind-tables \
+             -I$(PS2MAX_IOP_SDK)/iop/include -I$(PS2MAX_IOP_SDK)/common/include -Iiop
+IOP_IMPORT_CFLAGS = -include iop/irx_clang.h
+endif
 IOP_SRCS   = net_fsys.c net_fio.c ps2link.c cmdHandler.c nprintf.c excepHandler.c
 IOP_OBJS   = $(IOP_SRCS:%.c=$(OUT)/iop/%.o) $(OUT)/iop/imports.o
 
@@ -88,21 +101,21 @@ $(OUT)/iop/%.o: iop/%.c $(wildcard iop/*.h)
 	@mkdir -p $(dir $@)
 	$(IOP_CC) $(IOP_CFLAGS) -c $< -o $@
 
-$(OUT)/iop/imports.o: iop/imports.lst iop/irx_imports.h
+$(OUT)/iop/imports.o: iop/imports.lst iop/irx_imports.h iop/irx_clang.h
 	@mkdir -p $(dir $@)
 	{ echo '#include "irx_imports.h"'; cat $<; } > $(@:.o=.c)
-	$(IOP_CC) $(IOP_CFLAGS) -fno-toplevel-reorder -c $(@:.o=.c) -o $@
+	$(IOP_CC) $(IOP_CFLAGS) $(IOP_IMPORT_CFLAGS) -c $(@:.o=.c) -o $@
 
 $(OUT)/iop/ps2link.elf: $(IOP_OBJS)
-	$(IOP_CC) -T$(PS2MAX_IOP_SDK)/iop/startup/linkfile -Os -o $@ $^ -nostdlib -dc -r
+	$(IOP_LD) -T$(PS2MAX_IOP_SDK)/iop/startup/linkfile -Os -o $@ $^ -nostdlib -dc -r
 
-$(OUT)/iop/chime_imports.o: iop/chime_imports.lst iop/irx_imports.h
+$(OUT)/iop/chime_imports.o: iop/chime_imports.lst iop/irx_imports.h iop/irx_clang.h
 	@mkdir -p $(dir $@)
 	{ echo '#include "irx_imports.h"'; cat $<; } > $(@:.o=.c)
-	$(IOP_CC) $(IOP_CFLAGS) -fno-toplevel-reorder -c $(@:.o=.c) -o $@
+	$(IOP_CC) $(IOP_CFLAGS) $(IOP_IMPORT_CFLAGS) -c $(@:.o=.c) -o $@
 
 $(OUT)/iop/chime.elf: $(OUT)/iop/chime.o $(OUT)/iop/chime_imports.o
-	$(IOP_CC) -T$(PS2MAX_IOP_SDK)/iop/startup/linkfile -Os -o $@ $^ -nostdlib -dc -r
+	$(IOP_LD) -T$(PS2MAX_IOP_SDK)/iop/startup/linkfile -Os -o $@ $^ -nostdlib -dc -r
 
 $(OUT)/iop/%.irx: $(OUT)/iop/%.elf
 	$(IOP_STRIP) --strip-unneeded --remove-section=.pdr --remove-section=.comment \
