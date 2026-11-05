@@ -14,6 +14,7 @@
 #include <mx/cpu.h>
 #include <mx/debug.h>
 #include <mx/gs.h>
+#include <mx/hw/regs.h>
 #include <mx/iop.h>
 #include <mx/sif.h>
 #include <mx/string.h>
@@ -162,6 +163,10 @@ static void restart(void) {
   restarts++;
   mx_debug_flush();
   mx_bios_flush_cache(0);
+  /* ExecPS2 drops the handlers but leaves the channel on: a command from the
+     host now would end in the kernel's "DMAC(5) Handler does not exist" and
+     its break. cmd_init turns it on again. */
+  mx_bios_disable_dmac(MX_DMAC_SIF0);
   mx_bios_exec_ps2(__start, _gp, 1, argv);
   for (;;)
     ;
@@ -169,6 +174,7 @@ static void restart(void) {
 
 void mxlink_restart(void) {
   exec_kill();
+  iop_last = 0; /* ps2link.irx gave up host: for this reset: never kept */
   restart();
 }
 
