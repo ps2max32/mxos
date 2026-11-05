@@ -1,9 +1,8 @@
 # mxlink
 
-The loader and monitor the PS2 runs: ps2link's EE side rewritten on maxsdk,
-with ps2link's IOP module (`iop/`) and protocol, so `ps2client` and the
-`ps2-hw-test` runner work with it as with ps2link. Installed on the PS2 as
-`mc0:/APPS/PS2LINK.ELF` (2026-11-03).
+A loader and monitor for the PS2: ps2link's EE side rewritten on maxsdk, with
+ps2link's IOP module (`iop/`) and protocol, so `ps2client` and scripts around
+it work with mxlink as with ps2link.
 
 What it adds to ps2link:
 
@@ -22,14 +21,16 @@ What it adds to ps2link:
   return function (since maxsdk 8f9a72f; crash reports too); the BIOS's Exit
   is replaced for the others, ps2sdk's and older maxsdk ones (`ee/hook.S`).
   The screen shows the last program and its exit status.
-- A short boot sound after every IOP reset (`iop/chime.c`). It resets the
-  SPU2 first, so a program's sound stops when it returns (the IOP's reset
-  alone leaves the SPU2 playing); the module does not stay on the IOP.
+- A short boot sound (`iop/chime.c`), after every IOP reset: at boot, and
+  when a program that loaded IOP modules returns. It resets the SPU2 first,
+  so a program's sound stops when it returns (the IOP's reset alone leaves
+  the SPU2 playing). A return with the IOP kept makes no sound; a program
+  needs IOP modules to play anything. The module does not stay on the IOP.
 - `ps2client status` says what it is doing (state, program, programs
   returned, last exit status). The IOP module answers it alone, so it is
   safe while a program runs, unlike `ping`.
 
-Not yet (PLAN.md): catching crashes of ps2sdk programs, a "return to mxlink"
+Not yet: catching crashes of ps2sdk programs, a "return to mxlink"
 command, the VU register dumps.
 
 ## Build
@@ -40,20 +41,22 @@ make all high      # build/tools/mxlink/MXLINK.ELF, mxlink-high.elf
 
 - `MXLINK.ELF`: resident at 0x94000-0xFF800, below the programs (as ps2link);
   the one to install.
-- `mxlink-high.elf`: the same at 0x1E00000, to start from a running loader
-  for a test: `run.sh build/tools/mxlink/mxlink-high.elf 20` (its IOP reset
-  ends the run with a lost connection), then `run.sh
-  build/tools/mxlink/MXLINK.ELF 20` to try the real one, then the tests.
+- `mxlink-high.elf`: the same at 0x1E00000, to try a build without
+  installing it: from a running loader, `ps2client execee
+  host:mxlink-high.elf` (its IOP reset ends the connection: expected), then
+  the same with `host:MXLINK.ELF`, then the tests. A reboot starts the
+  installed loader again.
 - `make SHOT=1`: on PCSX2 (no network there) the start stops at SMAP; this
   saves the screen to `host:mxlink.tga` there and prints the test end marker.
 - Needs maxsdk (its own copy of libmx, built for size, in
   `build/tools/mxlink/maxsdk`), the IOP gcc and ps2sdk's IOP build files
   (`PS2MAX_IOP_BIN`, `PS2MAX_IOP_SDK`) for `iop/`, and ps2sdk's prebuilt IOP
-  modules (`PS2MAX_IRX`).
+  modules (`PS2MAX_IRX`). Python only to change the boot sound
+  (`iop/chime_blip.py` writes `iop/chime_blip.h`, which is committed).
 
 ## Install
 
-`~/.claude/skills/ps2-hw-test/install-ps2link.sh build/tools/mxlink/MXLINK.ELF`
-(backs the card's file up first; holding Up at power-on boots the old
-high-loading ps2link). The network address: `IPCONFIG.DAT` next to the ELF
-(`ip mask gw`), else 192.168.1.10.
+Copy `MXLINK.ELF` to a memory card and have your boot loader start it, as
+with ps2link; keep the file it replaces, to go back to if the new one does
+not start. The network address: `IPCONFIG.DAT` next to the ELF (`ip mask
+gw`), else 192.168.1.10.
