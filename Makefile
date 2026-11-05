@@ -36,17 +36,18 @@ include $(PS2MAX)/libs/maxsdk/mk/maxsdk.mk
 CFLAGS += $(if $(SHOT),-DMXLINK_SHOT)
 
 SRCS = main.c cmd.c exec.c con.c font.c
-IRXS = chime poweroff ps2dev9 netman smap ps2ip udptty ioptrap ps2link
-irx_path = $(if $(filter ps2link,$(1)),$(PS2LINK_IRX),$(if $(filter chime,$(1)),$(CHIME_IRX),$(PS2MAX_IRX)/$(if $(filter ps2ip,$(1)),ps2ip-nm,$(1)).irx))
+# the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
+MODULES = poweroff ps2dev9 netman smap ps2ip-nm udptty ioptrap sio2man mcman mcserv padman
 
 # resident below the programs' memory, as ps2link: 0x94000 up to the 2 KiB
 # where ps2link.irx writes the host's commands (0xFF800)
 LOW_LDFLAGS  = --defsym=__mx_base=0x94000 --defsym=__mx_top=0xFF800 --defsym=__mx_stack_size=0x4000
 HIGH_LDFLAGS = --defsym=__mx_base=0x1E00000 --defsym=__mx_top=0x1F00000 --defsym=__mx_stack_size=0x4000
 
-OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/hook.o $(OUT)/obj/irx.o
+OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/hook.o
 
-all: $(OUT)/MXLINK.ELF $(OUT)/iop/mxroot.irx
+all: $(OUT)/MXLINK.ELF $(OUT)/iop/mxroot.irx modules
+modules: $(MODULES:%=$(OUT)/MXOS/%.irx) $(OUT)/MXOS/ps2link.irx $(OUT)/MXOS/chime.irx
 high: $(OUT)/mxlink-high.elf
 
 $(OUT)/obj/%.o: ee/%.c ee/mxlink.h $(MX_HDRS)
@@ -57,14 +58,23 @@ $(OUT)/obj/hook.o: ee/hook.S
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OUT)/obj/irx.S: Makefile $(foreach i,$(IRXS),$(call irx_path,$(i)))
+$(OUT)/MXOS/%.irx: $(PS2MAX_IRX)/%.irx
 	@mkdir -p $(dir $@)
-	{ echo '.section .rodata'; \
-	  $(foreach i,$(IRXS),printf '%s\n' '.balign 16' '.globl $(i)_irx' '$(i)_irx:' \
-	    '.incbin "$(call irx_path,$(i))"' '.globl $(i)_irx_end' '$(i)_irx_end:';) } > $@
+	cp $< $@
 
-$(OUT)/obj/irx.o: $(OUT)/obj/irx.S
-	$(CC) $(CFLAGS) -c $< -o $@
+$(OUT)/MXOS/ps2link.irx: $(PS2LINK_IRX)
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(OUT)/MXOS/chime.irx: $(CHIME_IRX)
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+mxos-fill: $(OUT)/mxos-fill.elf
+$(OUT)/mxos-fill.elf: tools/mxos-fill.c $(MX_LIB) $(MX_CRT0)
+	@mkdir -p $(OUT)/obj
+	$(CC) $(CFLAGS) -c $< -o $(OUT)/obj/mxos-fill.o
+	$(call link,$@,$(MX_CRT0) $(OUT)/obj/mxos-fill.o $(MX_LIB))
 
 $(OUT)/mxlink.elf: $(OBJS) $(MX_LIB) $(MX_CRT0) $(MX_LD)
 	$(call link,$@,$(LOW_LDFLAGS) $(MX_CRT0) $(OBJS) $(MX_LIB))
@@ -133,4 +143,4 @@ $(OUT)/iop/%.irx: $(OUT)/iop/%.elf
 clean:
 	rm -rf $(OUT)
 
-.PHONY: all high clean
+.PHONY: all high modules mxos-fill clean

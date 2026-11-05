@@ -18,6 +18,7 @@
 #include <mx/iop.h>
 #include <mx/sif.h>
 #include <mx/string.h>
+#include <mx/timer.h>
 
 #include "mxlink.h"
 
@@ -46,10 +47,21 @@ static char launch_swap[64] __attribute__((section(".data"))) = {0};
 #define DEFAULT_NETMASK "255.255.255.0"
 #define DEFAULT_GW "192.168.1.0"
 
-/* the IOP modules (irx.S, made by the Makefile) */
-#define IRX(n) extern const u8 n##_irx[], n##_irx_end[];
-IRX(chime) IRX(poweroff) IRX(ps2dev9) IRX(netman) IRX(smap) IRX(ps2ip) IRX(udptty) IRX(ioptrap) IRX(ps2link)
-#undef IRX
+/* The IOP modules are files of the memory card (make: $(OUT)/MXOS), in the
+   order they load. They are read to the programs' memory above mxlink's,
+   free whenever the IOP is set up. */
+#define MODULE_DIR "mc0:/MXOS/"
+#define MODULE_MEM ((u8 *)0x01000000)
+enum { M_CHIME, M_PS2IP = 5 };
+static const char *const module_names[] = {
+    "chime",   "poweroff", "ps2dev9", "netman", "smap",   "ps2ip-nm", "udptty",
+    "ioptrap", "ps2link",  "sio2man", "mcman",  "mcserv", "padman",
+};
+#define NMODULES (sizeof module_names / sizeof module_names[0])
+static struct {
+  const u8 *start;
+  u32 size;
+} modules[NMODULES];
 
 /* the screen's rows */
 #define ROW_TITLE 0
@@ -218,11 +230,63 @@ void mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
   restart();
 }
 
-static int load(const char *name, const u8 *start, const u8 *end, const char *args, u32 args_len) {
+static int module_open(u32 i) {
+  char path[48];
+  u32 n = sizeof MODULE_DIR - 1, l = strlen(module_names[i]);
+  memcpy(path, MODULE_DIR, n);
+  memcpy(path + n, module_names[i], l);
+  memcpy(path + n + l, ".irx", 5);
+  return mx_fio_open(path, MX_FIO_RDONLY);
+}
+
+/* Can the card be read now? The first access takes the card a while. */
+static int card_ready(void) {
+  for (int i = 0; i < 20; i++) {
+    int fd = module_open(0);
+    if (fd >= 0) {
+      mx_fio_close(fd);
+      return 1;
+    }
+    mx_delay_us(100000);
+  }
+  return 0;
+}
+
+/* All modules to memory: with the IOP as it is if that reads the card (the
+   boot loader's, mxlink's), else after a reset with the ROM's drivers. */
+static int read_modules(void) {
+  status_state(ST_BOOT, "IOP modules: reading");
+  if (mx_sif_init() < 0 || !card_ready()) {
+    if (mx_iop_reset("") < 0 || mx_iop_load_module("rom0:SIO2MAN") < 0 ||
+        mx_iop_load_module("rom0:MCMAN") < 0 || mx_iop_load_module("rom0:MCSERV") < 0 ||
+        !card_ready()) {
+      con_log(CON_RED, "no IOP modules: cannot read %s", MODULE_DIR);
+      return -1;
+    }
+  }
+  u8 *to = MODULE_MEM;
+  for (u32 i = 0; i < NMODULES; i++) {
+    int fd = module_open(i), size = fd < 0 ? -1 : mx_fio_lseek(fd, 0, MX_FIO_SEEK_END);
+    if (size <= 0 || mx_fio_lseek(fd, 0, MX_FIO_SEEK_SET) != 0 ||
+        mx_fio_read(fd, to, (u32)size) != size) {
+      con_log(CON_RED, "IOP module %s%s.irx: cannot read it", MODULE_DIR, module_names[i]);
+      if (fd >= 0)
+        mx_fio_close(fd);
+      return -1;
+    }
+    mx_fio_close(fd);
+    modules[i].start = to;
+    modules[i].size = (u32)size;
+    to += ((u32)size + 63) & ~63u;
+  }
+  return 0;
+}
+
+static int load(u32 i, const char *args, u32 args_len) {
   int res = 0;
-  int id = mx_iop_load_module_buffer(start, (u32)(end - start), args, args_len, &res);
+  int id = mx_iop_load_module_buffer(modules[i].start, modules[i].size, args, args_len, &res);
   if (id < 0 || (res & 3) == 1 /* NO_RESIDENT_END: it did not stay */) {
-    con_log(CON_RED, "IOP module %s: %d (%d)", name, id, res);
+    con_log(CON_RED, "IOP module %s: %d (%d)", module_names[i], id, res);
     return -1;
   }
   return 0;
@@ -246,6 +310,8 @@ static int boot_iop(void) {
     return 0;
   if (returned)
     con_log(CON_GREY, "the program changed the IOP: reset");
+  if (read_modules() < 0)
+    return -1;
   status_state(ST_BOOT, "IOP reset");
   if (mx_iop_reset("") < 0) {
     con_log(CON_RED, "the IOP did not come back from its reset");
@@ -254,22 +320,13 @@ static int boot_iop(void) {
   mx_iop_patch_lmb();
   mx_iop_patch_prefix_check();
   /* every program that made sound loaded a module, so it gets here */
-  if (mx_iop_load_module_buffer(chime_irx, (u32)(chime_irx_end - chime_irx), 0, 0, &chime) < 0 ||
+  if (mx_iop_load_module_buffer(modules[M_CHIME].start, modules[M_CHIME].size, 0, 0, &chime) < 0 ||
       (chime & 3) != 1)
     con_log(CON_RED, "the chime did not run: a program's sound may go on");
   status_state(ST_BOOT, "IOP modules");
-#define LOAD(n, a, l)                                                                              \
-  if (load(#n, n##_irx, n##_irx_end, a, l) < 0)                                                    \
-    return -1;
-  LOAD(poweroff, 0, 0)
-  LOAD(ps2dev9, 0, 0)
-  LOAD(netman, 0, 0)
-  LOAD(smap, 0, 0)
-  LOAD(ps2ip, if_conf, if_conf_len)
-  LOAD(udptty, 0, 0)
-  LOAD(ioptrap, 0, 0)
-  LOAD(ps2link, 0, 0)
-#undef LOAD
+  for (u32 i = M_CHIME + 1; i < NMODULES; i++)
+    if (load(i, i == M_PS2IP ? if_conf : 0, i == M_PS2IP ? if_conf_len : 0) < 0)
+      return -1;
   iop_last = mx_iop_last_module();
   return 0;
 }

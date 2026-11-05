@@ -45,6 +45,9 @@ make all high      # build/tools/mxlink/MXLINK.ELF, mxlink-high.elf
 
 - `MXLINK.ELF`: resident at 0x94000-0xFF800, below the programs (as ps2link);
   the one to install.
+- `MXOS/*.irx`: the IOP modules. mxlink reads them from `mc0:/MXOS` at each
+  IOP start, with what the IOP has or else with the ROM's memory card drivers,
+  so it needs them there: without them it has no network.
 - `mxlink-high.elf`: the same at 0x1E00000, to try a build without
   installing it: from a running loader, `ps2client execee
   host:mxlink-high.elf` (its IOP reset ends the connection: expected), then
@@ -59,6 +62,9 @@ make all high      # build/tools/mxlink/MXLINK.ELF, mxlink-high.elf
   (`iop/chime_blip.py` writes `iop/chime_blip.h`, which is committed).
 
 ## Install
+
+Fill `mc0:/MXOS` first: `make mxos-fill`, then from the directory holding
+`MXOS/`, with a loader on the PS2, `ps2client execee host:mxos-fill.elf`.
 
 Copy `MXLINK.ELF` to a memory card and have your boot loader start it, as
 with ps2link; keep the file it replaces, to go back to if the new one does
