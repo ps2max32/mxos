@@ -35,7 +35,7 @@ include $(PS2MAX)/libs/maxsdk/mk/maxsdk.mk
 # SHOT=1: for tests on PCSX2, the screen saved where the start stops
 CFLAGS += $(if $(SHOT),-DMXLINK_SHOT)
 
-SRCS = main.c cmd.c exec.c con.c font.c
+SRCS = main.c cmd.c exec.c con.c font.c tlb.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
 MODULES = poweroff ps2dev9 netman smap ps2ip-nm udptty ioptrap sio2man mcman mcserv padman \
           libsd audsrv

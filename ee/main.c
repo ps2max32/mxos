@@ -413,6 +413,7 @@ static void screen(void) {
 }
 
 int main(int argc, char **argv) {
+  tlb_restore();
   if (!restarts) {
     /* the first start: the loader's IOP, its threads and handlers */
     u32 n = argc > 0 && argv[0] ? strlen(argv[0]) : 0;

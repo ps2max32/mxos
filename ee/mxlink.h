@@ -60,6 +60,7 @@ void cmd_launch(int argc, const char *args, u32 args_len);
 int exec_running(void);
 /* Stop the running program (its thread). */
 void exec_kill(void);
+void tlb_restore(void);
 
 /* the restart (main.c): the IOP reset and mxlink started again, as ps2link
    does on a reset command */
