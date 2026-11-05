@@ -30,6 +30,17 @@ What it adds to ps2link:
   makes no sound: audsrv mutes the stream and stays running for the next
   program, and the chime's quiet mode stops the voices. The module does not
   stay on the IOP.
+- A shell: `mc0:/MXOS/MXSHELL.ELF`, if it is there, is started at boot and
+  after each program it started (`mx_loader_launch`). `ps2client status`
+  then says `state=menu`. A host command that needs `host:` stops the shell
+  (cleaned up as after a program, the IOP kept, about a second; ps2client
+  asks again), and `execee` from a client that does not ask first starts its
+  program in the shell's place. A host's program returns to the text screen,
+  with its exit status and crash report; `ps2client reset` goes back to the
+  shell. A shell that ends itself also leaves the text screen up, so one
+  that crashes at its start cannot loop.
+- The BIOS's TLB is written back at every start (`ee/tlb.c`): ExecPS2 leaves
+  it as it is, so a killed program's VM entries would stay.
 - `ps2client status` says what it is doing (state, program, programs
   returned, last exit status) and which PS2 it is on: its model
   (`SCPH-70004`) and `rom0:ROMVER`, each `unknown` if the PS2 does not say.

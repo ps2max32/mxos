@@ -40,7 +40,7 @@ void con_log(u32 rgb, const char *fmt, ...) __attribute__((format(printf, 2, 3))
 
 /* ---- the status screen (main.c) ---------------------------------------- */
 
-enum { ST_BOOT, ST_READY, ST_RUNNING };
+enum { ST_BOOT, ST_READY, ST_RUNNING, ST_MENU };
 void status_state(int state, const char *what);
 int status_get(void);
 
@@ -58,6 +58,12 @@ int exec_elf(int argc, const char *args, u32 args_len);
 void cmd_launch(int argc, const char *args, u32 args_len);
 /* 1 while a program runs */
 int exec_running(void);
+/* Is the program running the shell (mc0:/MXOS/MXSHELL.ELF)? */
+int exec_in_shell(void);
+/* The next exec_elf starts the shell. */
+void exec_shell_next(void);
+/* Is this the resident mxlink, below the programs (not mxlink-high)? */
+int exec_resident(void);
 /* Stop the running program (its thread). */
 void exec_kill(void);
 void tlb_restore(void);
@@ -74,6 +80,11 @@ void mxlink_exit_hook(void);
 void exec_started(const char *path);
 /* A program's mx_loader_launch: mxlink restarts and starts that program,
    the IOP as it is. */
+/* The shell stopped for a host, the IOP kept: argc 0: to the text screen,
+   else this program in its place. */
+void mxlink_takeover(int argc, const char *args, u32 args_len) __attribute__((noreturn));
+/* A host's program: it comes back to the text screen, not to the shell. */
+void mxlink_host_run(void);
 void mxlink_launch(int argc, const char *args, u32 args_len, const char *swap)
     __attribute__((noreturn));
 /* The next program's swap file, for one exec_elf. */

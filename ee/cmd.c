@@ -85,6 +85,9 @@ static void path_of(char *d, const u8 *s) {
 /* the commands that use the IOP's file server: not while a program runs
    (it has the SIF replies) */
 static int files_ok(const char *what) {
+  /* a host that wants its files stops the shell; ps2client asks again */
+  if (exec_in_shell())
+    mxlink_takeover(0, 0, 0);
   if (!exec_running())
     return 1;
   con_log(CON_RED, "%s: not while a program runs", what);
@@ -290,6 +293,10 @@ static void cmd_thread(void *arg) {
       mxlink_restart();
       break;
     case PKO_EXECEE_CMD:
+      if (exec_in_shell())
+        mxlink_takeover((int)be32(p + HDR), (const char *)p + HDR + 4, PKO_MAX_PATH);
+      if (!exec_running())
+        mxlink_host_run();
       exec_elf((int)be32(p + HDR), (const char *)p + HDR + 4, PKO_MAX_PATH);
       break;
     case PKO_SCRDUMP_CMD:

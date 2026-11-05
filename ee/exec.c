@@ -54,7 +54,15 @@ static int user_tid; /* 0: no program */
 static struct mx_loader_args largs;
 static u8 user_stack[16 * 1024] __attribute__((aligned(16)));
 
+static int shell, next_shell;
+
 int exec_running(void) { return user_tid != 0; }
+int exec_in_shell(void) { return user_tid && shell; }
+void exec_shell_next(void) { next_shell = 1; }
+int exec_resident(void) {
+  extern char __stack[], __stack_size[];
+  return (u32)(uintptr_t)__stack + (u32)(uintptr_t)__stack_size <= LOW;
+}
 
 void exec_kill(void) {
   if (!user_tid)
@@ -97,6 +105,8 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     con_log(CON_RED, "a program is running already");
     return -1;
   }
+  shell = next_shell;
+  next_shell = 0;
   set_args(argc < 1 ? 1 : argc, args, args_len);
   const char *path = largs.args.argv[0];
   if (exec_returns())
@@ -210,7 +220,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     mx_bios_set_syscall(4, mxlink_exit_hook);
 
   exec_started(path);
-  status_state(ST_RUNNING, path);
+  status_state(shell ? ST_MENU : ST_RUNNING, path);
   /* from here the program owns the IOP's SIF replies and the screen: the
      debug output to the serial port only (con_log) */
   mx_debug_flush();

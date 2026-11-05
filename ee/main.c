@@ -42,6 +42,10 @@ static s32 launch_argc __attribute__((section(".data"))) = 0;
 static u32 launch_len __attribute__((section(".data"))) = 0;
 static char launch_args[256] __attribute__((section(".data"))) = {0};
 static char launch_swap[64] __attribute__((section(".data"))) = {0};
+static s32 launch_cleanup __attribute__((section(".data"))) = 0; /* the program was stopped */
+/* the next return goes to the text screen, not to the shell: after a host's
+   program, and after the shell ended itself (it may crash at each start) */
+static s32 no_shell __attribute__((section(".data"))) = 0;
 
 #define DEFAULT_IP "192.168.1.10"
 #define DEFAULT_NETMASK "255.255.255.0"
@@ -51,6 +55,7 @@ static char launch_swap[64] __attribute__((section(".data"))) = {0};
    order they load. They are read to the programs' memory above mxlink's,
    free whenever the IOP is set up. */
 #define MODULE_DIR "mc0:/MXOS/"
+#define SHELL_PATH MODULE_DIR "MXSHELL.ELF"
 #define MODULE_MEM ((u8 *)0x01000000)
 enum { M_CHIME, M_PS2IP = 5 };
 static const char *const module_names[] = {
@@ -107,6 +112,8 @@ void status_state(int st, const char *what) {
     iop_status_send(1);
   else if (st == ST_RUNNING)
     iop_status_send(2);
+  else if (st == ST_MENU)
+    iop_status_send(3);
   switch (st) {
   case ST_BOOT:
     con_line(ROW_STATE, CON_YELLOW, "State:  starting - %s", what);
@@ -116,6 +123,9 @@ void status_state(int st, const char *what) {
     break;
   case ST_RUNNING:
     con_line(ROW_STATE, CON_CYAN, "State:  running %s", what);
+    break;
+  case ST_MENU:
+    con_line(ROW_STATE, CON_CYAN, "State:  menu %s", what);
     break;
   }
 }
@@ -192,6 +202,7 @@ static void restart(void) {
 void mxlink_restart(void) {
   exec_kill();
   iop_last = 0; /* ps2link.irx gave up host: for this reset: never kept */
+  no_shell = 0;
   restart();
 }
 
@@ -210,6 +221,8 @@ void exec_started(const char *path) {
    the program, so only this file's .data and a BIOS call. The restart's
    ExecPS2 drops the program's threads, semaphores and handlers. */
 void mxlink_return(int status) {
+  if (exec_in_shell())
+    no_shell = 1;
   returned = 1;
   returns++;
   last_status = status;
@@ -229,6 +242,15 @@ void mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
   launch_argc = argc;
   restart();
 }
+
+void mxlink_takeover(int argc, const char *args, u32 args_len) {
+  exec_kill();
+  launch_cleanup = 1;
+  no_shell = 1;
+  mxlink_launch(argc, args, args_len, 0);
+}
+
+void mxlink_host_run(void) { no_shell = 1; }
 
 static int module_open(u32 i) {
   char path[48];
@@ -353,9 +375,12 @@ static void iop_cleanup(void) {
 
 static int boot_iop(void) {
   /* what the program loaded is there for the next one, and from now on */
-  if (launch_argc) {
+  if (launch_argc || launch_cleanup) {
     if (mx_sif_init() < 0)
       return -1;
+    if (launch_cleanup)
+      iop_cleanup();
+    launch_cleanup = 0;
     iop_last = mx_iop_last_module();
     return 0;
   }
@@ -395,6 +420,18 @@ static void stopped(void) {
 #endif
   for (;;)
     mx_bios_sleep_thread();
+}
+
+/* Is there a shell to start? Not after a host's program (no_shell), nor on
+   mxlink-high, which offers programs no way back. */
+static int shell_there(void) {
+  if (no_shell || !exec_resident() || !card_ready())
+    return 0;
+  int fd = mx_fio_open(SHELL_PATH, MX_FIO_RDONLY);
+  if (fd < 0)
+    return 0;
+  mx_fio_close(fd);
+  return 1;
 }
 
 static void screen(void) {
@@ -452,6 +489,9 @@ int main(int argc, char **argv) {
     launch_argc = 0;
     exec_swap(launch_swap[0] ? launch_swap : 0);
     cmd_launch(argc, launch_args, launch_len);
+  } else if (shell_there()) {
+    exec_shell_next();
+    cmd_launch(1, SHELL_PATH, sizeof SHELL_PATH);
   } else {
     status_state(ST_READY, 0);
   }
