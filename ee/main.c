@@ -55,7 +55,7 @@ static char launch_swap[64] __attribute__((section(".data"))) = {0};
 enum { M_CHIME, M_PS2IP = 5 };
 static const char *const module_names[] = {
     "chime",   "poweroff", "ps2dev9", "netman", "smap",   "ps2ip-nm", "udptty",
-    "ioptrap", "ps2link",  "sio2man", "mcman",  "mcserv", "padman",
+    "ioptrap", "ps2link",  "sio2man", "mcman",  "mcserv", "padman", "libsd",   "audsrv",
 };
 #define NMODULES (sizeof module_names / sizeof module_names[0])
 static struct {
@@ -301,13 +301,61 @@ static int iop_kept(void) {
   return mx_iop_last_module() == iop_last && mx_iop_find_module("ps2link", &m) > 0;
 }
 
+/* What a program leaves on the IOP when it ends, so the next finds the IOP as
+   it was. A program that crashed or was stopped did none of this itself. */
+#define PAD_SID 0x8000010Fu
+#define PAD_CLOSE 0x8000010D
+#define AUDSRV_SID 0x870884eu
+#define AUDSRV_STOP_AUDIO 0x0006
+#define AUDSRV_INIT_ADPCM 0x0016
+static struct mx_sif_client pad_rpc, snd_rpc;
+static s32 rpc_cmd[32] MX_DMA_LINES, rpc_res[32] MX_DMA_LINES;
+
+/* audsrv stays: its play thread runs on for the next program, the stream muted
+   and the samples stopped. (AUDSRV_QUIT would end that thread for good: a
+   later AUDSRV_INIT does nothing.) */
+static void sound_off(void) {
+  if (mx_sif_bind_tries(&snd_rpc, AUDSRV_SID, 2) < 0 || !snd_rpc.server)
+    return;
+  static const int calls[] = {AUDSRV_STOP_AUDIO, AUDSRV_INIT_ADPCM};
+  for (u32 i = 0; i < 2; i++) {
+    volatile s32 *a = MX_UNCACHED(rpc_cmd);
+    a[0] = a[1] = a[2] = a[3] = 0;
+    mx_sif_call(&snd_rpc, calls[i], (void *)a, 16, (void *)MX_UNCACHED(rpc_res), 4);
+  }
+}
+
+static void iop_cleanup(void) {
+  /* descriptors 0-2 are the tty's */
+  for (int fd = 3; fd < 32; fd++)
+    mx_fio_close(fd);
+  /* an open port goes on writing the pad's state to EE memory */
+  if (mx_sif_bind_tries(&pad_rpc, PAD_SID, 2) == 0 && pad_rpc.server) {
+    for (int port = 0; port < 2; port++) {
+      volatile s32 *c = MX_UNCACHED(rpc_cmd);
+      c[0] = PAD_CLOSE;
+      c[1] = port;
+      c[2] = 0;
+      c[3] = 1;
+      mx_sif_call(&pad_rpc, 1, (void *)c, sizeof rpc_cmd, (void *)MX_UNCACHED(rpc_res),
+                  sizeof rpc_res);
+    }
+  }
+  sound_off();
+}
+
 static int boot_iop(void) {
-  /* the modules the program loaded are there for the next one; its return
-     then resets the IOP, as they are not mxlink's */
-  if (launch_argc)
-    return mx_sif_init();
-  if (iop_kept())
+  /* what the program loaded is there for the next one, and from now on */
+  if (launch_argc) {
+    if (mx_sif_init() < 0)
+      return -1;
+    iop_last = mx_iop_last_module();
     return 0;
+  }
+  if (iop_kept()) {
+    iop_cleanup();
+    return 0;
+  }
   if (returned)
     con_log(CON_GREY, "the program changed the IOP: reset");
   if (read_modules() < 0)

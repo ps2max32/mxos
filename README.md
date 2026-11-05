@@ -17,15 +17,18 @@ What it adds to ps2link:
   640 x 512 PAL).
 - Programs return to mxlink when they end: no reboot, the IOP and the
   network kept unless the program loaded IOP modules or reset the IOP (then
-  mxlink resets it: a little over 4 s). maxsdk's `mx_exit` calls mxlink's
+  mxlink resets it: a little over 4 s). With the IOP kept mxlink cleans up
+  after the program: open files, pad ports, sound. Sound and the pad are
+  services on the IOP, so programs using them load nothing and the IOP stays.
+  maxsdk's `mx_exit` calls mxlink's
   return function (since maxsdk 8f9a72f; crash reports too); the BIOS's Exit
   is replaced for the others, ps2sdk's and older maxsdk ones (`ee/hook.S`).
   The screen shows the last program and its exit status.
 - A short boot sound (`iop/chime.c`), after every IOP reset: at boot, and
-  when a program that loaded IOP modules returns. It resets the SPU2 first,
-  so a program's sound stops when it returns (the IOP's reset alone leaves
-  the SPU2 playing). A return with the IOP kept makes no sound; a program
-  needs IOP modules to play anything. The module does not stay on the IOP.
+  when a program that loaded IOP modules returns. It resets the SPU2 first
+  (the IOP's reset alone leaves the SPU2 playing). A return with the IOP kept
+  makes no sound: audsrv stops the stream and the samples, and stays running
+  for the next program. The module does not stay on the IOP.
 - `ps2client status` says what it is doing (state, program, programs
   returned, last exit status) and which PS2 it is on: its model
   (`SCPH-70004`) and `rom0:ROMVER`, each `unknown` if the PS2 does not say.

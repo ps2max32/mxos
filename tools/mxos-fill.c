@@ -4,14 +4,16 @@
 #include <mx/sif.h>
 #include <mx/iop.h>
 #include <mx/timer.h>
-static const char*const N[]={"chime","poweroff","ps2dev9","netman","smap","ps2ip-nm","udptty","ioptrap","ps2link","sio2man","mcman","mcserv","padman"};
+static const char*const N[]={"chime","poweroff","ps2dev9","netman","smap","ps2ip-nm","udptty","ioptrap","ps2link","sio2man","mcman","mcserv","padman","libsd","audsrv"};
 static unsigned char a[131072] __attribute__((aligned(64))),b[131072] __attribute__((aligned(64)));
 static int end(int s){mx_printf("@@PS2TEST_END@@ status=%d\n",s);return s;}
 static void cat(char*d,const char*x,const char*y,const char*z){unsigned n=0;while(*x)d[n++]=*x++;while(*y)d[n++]=*y++;while(*z)d[n++]=*z++;d[n]=0;}
 int main(void){
   if(mx_sif_init()<0)return end(2);
-  mx_printf("SIO2MAN %d MCMAN %d MCSERV %d\n",mx_iop_load_module("rom0:SIO2MAN"),mx_iop_load_module("rom0:MCMAN"),mx_iop_load_module("rom0:MCSERV"));
-  int d=-1;for(int i=0;i<30;i++){d=mx_fio_dopen("mc0:/APPS");if(d>=0)break;mx_delay_us(100000);}
+  /* the card through what the IOP has, else through the ROM's drivers */
+  int d=mx_fio_dopen("mc0:/");
+  if(d<0){mx_printf("SIO2MAN %d MCMAN %d MCSERV %d\n",mx_iop_load_module("rom0:SIO2MAN"),mx_iop_load_module("rom0:MCMAN"),mx_iop_load_module("rom0:MCSERV"));
+    for(int i=0;i<30;i++){d=mx_fio_dopen("mc0:/");if(d>=0)break;mx_delay_us(100000);}}
   if(d<0){mx_printf("no card: %d\n",d);return end(3);}
   mx_fio_dclose(d);
   mx_printf("mkdir: %d\n",mx_fio_mkdir("mc0:/MXOS",0));

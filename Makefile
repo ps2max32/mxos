@@ -37,7 +37,8 @@ CFLAGS += $(if $(SHOT),-DMXLINK_SHOT)
 
 SRCS = main.c cmd.c exec.c con.c font.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
-MODULES = poweroff ps2dev9 netman smap ps2ip-nm udptty ioptrap sio2man mcman mcserv padman
+MODULES = poweroff ps2dev9 netman smap ps2ip-nm udptty ioptrap sio2man mcman mcserv padman \
+          libsd audsrv
 
 # resident below the programs' memory, as ps2link: 0x94000 up to the 2 KiB
 # where ps2link.irx writes the host's commands (0xFF800)
