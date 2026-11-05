@@ -43,8 +43,11 @@ What it adds to ps2link:
   `<device>/PS2MAX/<game>/` with a `game.ini` (`package-games.sh`), drawn by
   beam racing in 24 bits. Storage drivers are loaded from `mc0:/MXOS` for the
   chosen device only (`SHELL.CFG` remembers it), so MX4SIO's polling costs
-  nothing without one. The covers are abstract patterns made from the title
-  for now. The font is Lato (SIL Open Font License), made into
+  nothing without one. All paths of a `game.ini` are relative to its
+  directory: `title`, `year`, `type`, `elf`, `args`, `description` and
+  `cover`, a file made by `tools/mk-cover.py` (the shell only copies it to GS
+  memory; without one it draws a pattern from the title). A directory with
+  just `<directory>.elf` is a game too. The font is Lato (SIL Open Font License), made into
   `shell/font.bin` by `shell/gen-font.py`. Select leaves the shell.
 - The BIOS's TLB is written back at every start (`ee/tlb.c`): ExecPS2 leaves
   it as it is, so a killed program's VM entries would stay.

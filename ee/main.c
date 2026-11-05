@@ -482,6 +482,7 @@ int main(int argc, char **argv) {
   if (returned)
     con_log(last_status ? CON_RED : CON_GREEN, "%s returned, exit status %d", last_path,
             (int)last_status);
+  int came_back = (int)returned;
   returned = 0;
   con_log(CON_GREEN, "mxlink %s ready", MXLINK_VERSION);
   if (launch_argc) {
@@ -490,8 +491,19 @@ int main(int argc, char **argv) {
     exec_swap(launch_swap[0] ? launch_swap : 0);
     cmd_launch(argc, launch_args, launch_len);
   } else if (shell_there()) {
+    /* it is told what came back: argv[1] the program, argv[2] its status */
+    static char args[256];
+    u32 n = sizeof SHELL_PATH;
+    memcpy(args, SHELL_PATH, n);
+    int m = 0;
+    if (came_back && n + strlen(last_path) + 16 < sizeof args) {
+      memcpy(args + n, last_path, strlen(last_path) + 1);
+      n += strlen(last_path) + 1;
+      m = mx_snprintf(args + n, 16, "%d", (int)last_status);
+      n += (u32)m + 1;
+    }
     exec_shell_next();
-    cmd_launch(1, SHELL_PATH, sizeof SHELL_PATH);
+    cmd_launch(m ? 3 : 1, args, n);
   } else {
     status_state(ST_READY, 0);
   }
