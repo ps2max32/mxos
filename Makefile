@@ -46,7 +46,7 @@ HIGH_LDFLAGS = --defsym=__mx_base=0x1E00000 --defsym=__mx_top=0x1F00000 --defsym
 
 OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/hook.o $(OUT)/obj/irx.o
 
-all: $(OUT)/MXLINK.ELF
+all: $(OUT)/MXLINK.ELF $(OUT)/iop/mxroot.irx
 high: $(OUT)/mxlink-high.elf
 
 $(OUT)/obj/%.o: ee/%.c ee/mxlink.h $(MX_HDRS)
@@ -115,6 +115,14 @@ $(OUT)/iop/chime_imports.o: iop/chime_imports.lst iop/irx_imports.h iop/irx_clan
 	$(IOP_CC) $(IOP_CFLAGS) $(IOP_IMPORT_CFLAGS) -c $(@:.o=.c) -o $@
 
 $(OUT)/iop/chime.elf: $(OUT)/iop/chime.o $(OUT)/iop/chime_imports.o
+	$(IOP_LD) -T$(PS2MAX_IOP_SDK)/iop/startup/linkfile -Os -o $@ $^ -nostdlib -dc -r
+
+$(OUT)/iop/mxroot_imports.o: iop/mxroot_imports.lst iop/irx_imports.h iop/irx_clang.h
+	@mkdir -p $(dir $@)
+	{ echo '#include "irx_imports.h"'; cat $<; } > $(@:.o=.c)
+	$(IOP_CC) $(IOP_CFLAGS) $(IOP_IMPORT_CFLAGS) -c $(@:.o=.c) -o $@
+
+$(OUT)/iop/mxroot.elf: $(OUT)/iop/mxroot.o $(OUT)/iop/mxroot_imports.o
 	$(IOP_LD) -T$(PS2MAX_IOP_SDK)/iop/startup/linkfile -Os -o $@ $^ -nostdlib -dc -r
 
 $(OUT)/iop/%.irx: $(OUT)/iop/%.elf

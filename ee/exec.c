@@ -89,6 +89,9 @@ static void set_args(int argc, const char *args, u32 len) {
   a->argc = i;
 }
 
+static const char *next_swap;
+void exec_swap(const char *swap) { next_swap = swap; }
+
 int exec_elf(int argc, const char *args, u32 args_len) {
   if (user_tid) {
     con_log(CON_RED, "a program is running already");
@@ -198,6 +201,10 @@ int exec_elf(int argc, const char *args, u32 args_len) {
      the programs; mxlink-high is in their memory) */
   largs.ret_magic = self_end <= LOW ? MX_LOADER_RET : 0;
   largs.ret = mxlink_return;
+  largs.launch_magic = self_end <= LOW ? MX_LOADER_LAUNCH : 0;
+  largs.launch = mxlink_launch;
+  largs.swap = next_swap;
+  next_swap = 0;
   /* and for the others (ps2sdk's, older maxsdk ones): their Exit */
   if (self_end <= LOW)
     mx_bios_set_syscall(4, mxlink_exit_hook);

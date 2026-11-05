@@ -36,6 +36,11 @@ static u32 returned __attribute__((section(".data"))) = 0;
 static s32 last_status __attribute__((section(".data"))) = 0;
 static s32 iop_last __attribute__((section(".data"))) = 0;
 static u32 returns __attribute__((section(".data"))) = 0; /* programs returned so far */
+/* mx_loader_launch: the program to start after the restart */
+static s32 launch_argc __attribute__((section(".data"))) = 0;
+static u32 launch_len __attribute__((section(".data"))) = 0;
+static char launch_args[256] __attribute__((section(".data"))) = {0};
+static char launch_swap[64] __attribute__((section(".data"))) = {0};
 
 #define DEFAULT_IP "192.168.1.10"
 #define DEFAULT_NETMASK "255.255.255.0"
@@ -199,6 +204,20 @@ void mxlink_return(int status) {
   restart();
 }
 
+void mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
+  u32 n = swap ? strlen(swap) : 0;
+  if (n >= sizeof launch_swap)
+    n = 0;
+  memcpy(launch_swap, swap ? swap : "", n);
+  launch_swap[n] = 0;
+  if (args_len > sizeof launch_args)
+    args_len = sizeof launch_args;
+  memcpy(launch_args, args, args_len);
+  launch_len = args_len;
+  launch_argc = argc;
+  restart();
+}
+
 static int load(const char *name, const u8 *start, const u8 *end, const char *args, u32 args_len) {
   int res = 0;
   int id = mx_iop_load_module_buffer(start, (u32)(end - start), args, args_len, &res);
@@ -219,6 +238,10 @@ static int iop_kept(void) {
 }
 
 static int boot_iop(void) {
+  /* the modules the program loaded are there for the next one; its return
+     then resets the IOP, as they are not mxlink's */
+  if (launch_argc)
+    return mx_sif_init();
   if (iop_kept())
     return 0;
   if (returned)
@@ -311,7 +334,14 @@ int main(int argc, char **argv) {
             (int)last_status);
   returned = 0;
   con_log(CON_GREEN, "mxlink %s ready", MXLINK_VERSION);
-  status_state(ST_READY, 0);
+  if (launch_argc) {
+    int argc = launch_argc;
+    launch_argc = 0;
+    exec_swap(launch_swap[0] ? launch_swap : 0);
+    cmd_launch(argc, launch_args, launch_len);
+  } else {
+    status_state(ST_READY, 0);
+  }
   /* the main thread ends; the command thread serves */
   mx_bios_exit_delete_thread();
   return 0;

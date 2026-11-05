@@ -41,6 +41,10 @@ static int sif0_id;
 /* the packet, copied out of CMD_AREA by the interrupt */
 static u8 pkt[1024] __attribute__((aligned(16)));
 static volatile int pkt_new;
+/* mx_loader_launch: as an EXECEE, in the command thread */
+static volatile int launch_argc;
+static const char *launch_args;
+static u32 launch_len;
 static u8 data_buf[16 * 1024] __attribute__((aligned(64)));
 
 static int sif0_handler(int ch, void *arg, void *addr) {
@@ -268,8 +272,15 @@ static void iop_exception(const u32 *w) {
 static void cmd_thread(void *arg) {
   (void)arg;
   for (;;) {
-    while (!pkt_new)
+    while (!pkt_new && !launch_argc)
       mx_bios_sleep_thread();
+    if (launch_argc) {
+      int argc = launch_argc;
+      launch_argc = 0;
+      if (exec_elf(argc, launch_args, launch_len) < 0)
+        status_state(ST_READY, 0);
+      continue;
+    }
     pkt_new = 0;
     const u8 *p = pkt + 4;
     u32 cmd = be32(p);
@@ -311,6 +322,13 @@ static void cmd_thread(void *arg) {
 }
 
 static u8 cmd_stack[16 * 1024] __attribute__((aligned(16)));
+
+void cmd_launch(int argc, const char *args, u32 args_len) {
+  launch_args = args;
+  launch_len = args_len;
+  launch_argc = argc;
+  mx_bios_wakeup_thread(cmd_tid);
+}
 
 int cmd_init(void) {
   /* ps2link's command thread: above the programs (64) */

@@ -54,6 +54,8 @@ int cmd_init(void);
    arguments (argc strings, one after the other in args, argv[0] the path).
    Returns 0, < 0 with the reason on the console. */
 int exec_elf(int argc, const char *args, u32 args_len);
+/* Start that program from the command thread, as an EXECEE. */
+void cmd_launch(int argc, const char *args, u32 args_len);
 /* 1 while a program runs */
 int exec_running(void);
 /* Stop the running program (its thread). */
@@ -69,6 +71,12 @@ void mxlink_return(int status) __attribute__((noreturn));
 void mxlink_exit_hook(void);
 /* the path of the program started, for the screen after its return */
 void exec_started(const char *path);
+/* A program's mx_loader_launch: mxlink restarts and starts that program,
+   the IOP as it is. */
+void mxlink_launch(int argc, const char *args, u32 args_len, const char *swap)
+    __attribute__((noreturn));
+/* The next program's swap file, for one exec_elf. */
+void exec_swap(const char *swap);
 /* programs returned to mxlink since it booted, the last one's exit status */
 u32 exec_returns(void);
 s32 exec_last_status(void);
