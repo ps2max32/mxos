@@ -42,7 +42,7 @@ static u32 returns __attribute__((section(".data"))) = 0; /* programs returned s
 
 /* the IOP modules (irx.S, made by the Makefile) */
 #define IRX(n) extern const u8 n##_irx[], n##_irx_end[];
-IRX(poweroff) IRX(ps2dev9) IRX(netman) IRX(smap) IRX(ps2ip) IRX(udptty) IRX(ioptrap) IRX(ps2link)
+IRX(chime) IRX(poweroff) IRX(ps2dev9) IRX(netman) IRX(smap) IRX(ps2ip) IRX(udptty) IRX(ioptrap) IRX(ps2link)
 #undef IRX
 
 /* the screen's rows */
@@ -55,6 +55,7 @@ IRX(poweroff) IRX(ps2dev9) IRX(netman) IRX(smap) IRX(ps2ip) IRX(udptty) IRX(iopt
 #define ROW_HELP 9
 
 static int state = ST_BOOT;
+static int chime; /* iop/chime.c's start result, 0: it did not run */
 
 int status_get(void) { return state; }
 
@@ -223,6 +224,10 @@ static int boot_iop(void) {
   }
   mx_iop_patch_lmb();
   mx_iop_patch_prefix_check();
+  /* every program that made sound loaded a module, so it gets here */
+  if (mx_iop_load_module_buffer(chime_irx, (u32)(chime_irx_end - chime_irx), 0, 0, &chime) < 0 ||
+      (chime & 3) != 1)
+    con_log(CON_RED, "the chime did not run: a program's sound may go on");
   status_state(ST_BOOT, "IOP modules");
 #define LOAD(n, a, l)                                                                              \
   if (load(#n, n##_irx, n##_irx_end, a, l) < 0)                                                    \
@@ -292,6 +297,9 @@ int main(int argc, char **argv) {
     con_log(CON_RED, "the command thread did not start");
     stopped();
   }
+  if (chime)
+    con_log(CON_GREY, "sound reset: %d voices were on, auto DMA %d; blip envelope %04x",
+            chime >> 2 & 63, chime >> 8 & 3, chime >> 12 & 0xFFFF);
   if (returned)
     con_log(last_status ? CON_RED : CON_GREEN, "%s returned, exit status %d", last_path,
             (int)last_status);

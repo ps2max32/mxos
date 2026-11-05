@@ -19,6 +19,7 @@ PS2MAX_IOP_SDK ?= $(PS2MAX_PS2DEV)/ps2sdk
 PS2MAX_IRX     ?= $(PS2MAX_IOP_SDK)/iop/irx
 # ps2link's IOP module, built here from iop/
 PS2LINK_IRX = $(OUT)/iop/ps2link.irx
+CHIME_IRX   = $(OUT)/iop/chime.irx
 
 # its own libmx, built for size and with a section per function and
 # variable, so the link keeps only what mxlink uses (it has to fit below
@@ -32,8 +33,8 @@ include $(PS2MAX)/libs/maxsdk/mk/maxsdk.mk
 CFLAGS += $(if $(SHOT),-DMXLINK_SHOT)
 
 SRCS = main.c cmd.c exec.c con.c font.c
-IRXS = poweroff ps2dev9 netman smap ps2ip udptty ioptrap ps2link
-irx_path = $(if $(filter ps2link,$(1)),$(PS2LINK_IRX),$(PS2MAX_IRX)/$(if $(filter ps2ip,$(1)),ps2ip-nm,$(1)).irx)
+IRXS = chime poweroff ps2dev9 netman smap ps2ip udptty ioptrap ps2link
+irx_path = $(if $(filter ps2link,$(1)),$(PS2LINK_IRX),$(if $(filter chime,$(1)),$(CHIME_IRX),$(PS2MAX_IRX)/$(if $(filter ps2ip,$(1)),ps2ip-nm,$(1)).irx))
 
 # resident below the programs' memory, as ps2link: 0x94000 up to the 2 KiB
 # where ps2link.irx writes the host's commands (0xFF800)
@@ -72,7 +73,7 @@ $(OUT)/MXLINK.ELF: $(OUT)/mxlink.elf
 $(OUT)/mxlink-high.elf: $(OBJS) $(MX_LIB) $(MX_CRT0) $(MX_LD)
 	$(call link,$@,$(HIGH_LDFLAGS) $(MX_CRT0) $(OBJS) $(MX_LIB))
 
-# ---- the IOP module (iop/: ps2link's, ps2sdk's IOP build rules) -------------
+# ---- the IOP modules (iop/: ps2link's and the chime, ps2sdk's IOP build rules) -------------
 
 IOP_CC     = $(PS2MAX_IOP_BIN)/mipsel-none-elf-gcc
 IOP_STRIP  = $(PS2MAX_IOP_BIN)/mipsel-none-elf-strip
@@ -95,7 +96,15 @@ $(OUT)/iop/imports.o: iop/imports.lst iop/irx_imports.h
 $(OUT)/iop/ps2link.elf: $(IOP_OBJS)
 	$(IOP_CC) -T$(PS2MAX_IOP_SDK)/iop/startup/linkfile -Os -o $@ $^ -nostdlib -dc -r
 
-$(PS2LINK_IRX): $(OUT)/iop/ps2link.elf
+$(OUT)/iop/chime_imports.o: iop/chime_imports.lst iop/irx_imports.h
+	@mkdir -p $(dir $@)
+	{ echo '#include "irx_imports.h"'; cat $<; } > $(@:.o=.c)
+	$(IOP_CC) $(IOP_CFLAGS) -fno-toplevel-reorder -c $(@:.o=.c) -o $@
+
+$(OUT)/iop/chime.elf: $(OUT)/iop/chime.o $(OUT)/iop/chime_imports.o
+	$(IOP_CC) -T$(PS2MAX_IOP_SDK)/iop/startup/linkfile -Os -o $@ $^ -nostdlib -dc -r
+
+$(OUT)/iop/%.irx: $(OUT)/iop/%.elf
 	$(IOP_STRIP) --strip-unneeded --remove-section=.pdr --remove-section=.comment \
 	  --remove-section=.mdebug.abi32 --remove-section=.gnu.attributes -o $(@:.irx=.stripped.elf) $<
 	$(PS2MAX_IOP_SDK)/bin/iopfixup --irx1 -o $@ $(@:.irx=.stripped.elf)

@@ -22,7 +22,9 @@ What it adds to ps2link:
   return function (since maxsdk 8f9a72f; crash reports too); the BIOS's Exit
   is replaced for the others, ps2sdk's and older maxsdk ones (`ee/hook.S`).
   The screen shows the last program and its exit status.
-
+- A short boot sound after every IOP reset (`iop/chime.c`). It resets the
+  SPU2 first, so a program's sound stops when it returns (the IOP's reset
+  alone leaves the SPU2 playing); the module does not stay on the IOP.
 - `ps2client status` says what it is doing (state, program, programs
   returned, last exit status). The IOP module answers it alone, so it is
   safe while a program runs, unlike `ping`.
