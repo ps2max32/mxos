@@ -4,10 +4,10 @@
 #include <mx/sif.h>
 #include <mx/iop.h>
 #include <mx/timer.h>
-static const char*const N[]={"chime","poweroff","ps2dev9","netman","smap","ps2ip-nm","udptty","ioptrap","ps2link","sio2man","mcman","mcserv","padman","libsd","audsrv"};
-static unsigned char a[131072] __attribute__((aligned(64))),b[131072] __attribute__((aligned(64)));
+static const char*const N[]={"chime.irx","poweroff.irx","ps2dev9.irx","netman.irx","smap.irx","ps2ip-nm.irx","udptty.irx","ioptrap.irx","ps2link.irx","sio2man.irx","mcman.irx","mcserv.irx","padman.irx","libsd.irx","audsrv.irx","bdm.irx","bdmfs_fatfs.irx","usbd.irx","usbmass_bd.irx","mx4sio_bd.irx","MXSHELL.ELF"};
+static unsigned char a[262144] __attribute__((aligned(64))),b[262144] __attribute__((aligned(64)));
 static int end(int s){mx_printf("@@PS2TEST_END@@ status=%d\n",s);return s;}
-static void cat(char*d,const char*x,const char*y,const char*z){unsigned n=0;while(*x)d[n++]=*x++;while(*y)d[n++]=*y++;while(*z)d[n++]=*z++;d[n]=0;}
+static void cat(char*d,const char*x,const char*y){unsigned n=0;while(*x)d[n++]=*x++;while(*y)d[n++]=*y++;d[n]=0;}
 int main(void){
   if(mx_sif_init()<0)return end(2);
   /* the card through what the IOP has, else through the ROM's drivers */
@@ -19,8 +19,8 @@ int main(void){
   mx_printf("mkdir: %d\n",mx_fio_mkdir("mc0:/MXOS",0));
   unsigned total=0;
   for(unsigned i=0;i<sizeof N/sizeof*N;i++){
-    char s[64],t[64];cat(s,"host:MXOS/",N[i],".irx");cat(t,"mc0:/MXOS/",N[i],".irx");
-    int f=mx_fio_open(s,MX_FIO_RDONLY);if(f<0){mx_printf("%s: %d\n",s,f);return end(4);}
+    char s[64],t[64];cat(s,"host:MXOS/",N[i]);cat(t,"mc0:/MXOS/",N[i]);
+    int f=mx_fio_open(s,MX_FIO_RDONLY);if(f<0){mx_printf("%s: skipped\n",s);continue;}
     int g=mx_fio_open(t,MX_FIO_WRONLY|MX_FIO_CREAT|MX_FIO_TRUNC);if(g<0){mx_printf("%s: %d\n",t,g);return end(5);}
     int n=mx_fio_read(f,a,sizeof a);mx_fio_close(f);
     if(n<=0||n==(int)sizeof a){mx_printf("%s size %d\n",s,n);return end(6);}

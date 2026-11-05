@@ -71,6 +71,28 @@ $(OUT)/MXOS/chime.irx: $(CHIME_IRX)
 	@mkdir -p $(dir $@)
 	cp $< $@
 
+# the shell: mc0:/MXOS/MXSHELL.ELF, and the storage drivers it loads from there
+SHELL_SRCS = main.c draw.c cover.c games.c
+SHELL_OBJS = $(SHELL_SRCS:%.c=$(OUT)/shell/%.o) $(OUT)/shell/font.o
+STORAGE_MODULES = bdm bdmfs_fatfs usbd usbmass_bd mx4sio_bd
+
+shell: $(OUT)/MXOS/MXSHELL.ELF $(STORAGE_MODULES:%=$(OUT)/MXOS/%.irx)
+
+$(OUT)/shell/%.o: shell/%.c shell/shell.h shell/font.h $(MX_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/shell/font.o: shell/font.S shell/font.bin
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/shell/shell.elf: $(SHELL_OBJS) $(MX_LIB) $(MX_CRT0) $(MX_LD)
+	$(call link,$@,$(MX_CRT0) $(SHELL_OBJS) $(MX_LIB))
+
+$(OUT)/MXOS/MXSHELL.ELF: $(OUT)/shell/shell.elf
+	@mkdir -p $(dir $@)
+	$(LLVM)/llvm-strip -o $@ $<
+
 mxos-fill: $(OUT)/mxos-fill.elf
 $(OUT)/mxos-fill.elf: tools/mxos-fill.c $(MX_LIB) $(MX_CRT0)
 	@mkdir -p $(OUT)/obj
@@ -144,4 +166,4 @@ $(OUT)/iop/%.irx: $(OUT)/iop/%.elf
 clean:
 	rm -rf $(OUT)
 
-.PHONY: all high modules mxos-fill clean
+.PHONY: all high modules mxos-fill shell clean

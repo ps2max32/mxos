@@ -39,6 +39,13 @@ What it adds to ps2link:
   with its exit status and crash report; `ps2client reset` goes back to the
   shell. A shell that ends itself also leaves the text screen up, so one
   that crashes at its start cannot loop.
+- `shell/`, that shell (`make shell`): a carousel of the games in
+  `<device>/PS2MAX/<game>/` with a `game.ini` (`package-games.sh`), drawn by
+  beam racing in 24 bits. Storage drivers are loaded from `mc0:/MXOS` for the
+  chosen device only (`SHELL.CFG` remembers it), so MX4SIO's polling costs
+  nothing without one. The covers are abstract patterns made from the title
+  for now. The font is Lato (SIL Open Font License), made into
+  `shell/font.bin` by `shell/gen-font.py`. Select leaves the shell.
 - The BIOS's TLB is written back at every start (`ee/tlb.c`): ExecPS2 leaves
   it as it is, so a killed program's VM entries would stay.
 - `ps2client status` says what it is doing (state, program, programs

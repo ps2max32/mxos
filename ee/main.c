@@ -42,7 +42,7 @@ static s32 launch_argc __attribute__((section(".data"))) = 0;
 static u32 launch_len __attribute__((section(".data"))) = 0;
 static char launch_args[256] __attribute__((section(".data"))) = {0};
 static char launch_swap[64] __attribute__((section(".data"))) = {0};
-static s32 launch_cleanup __attribute__((section(".data"))) = 0; /* the program was stopped */
+static s32 launch_cleanup __attribute__((section(".data"))) = 0; /* the program before it ended */
 /* the next return goes to the text screen, not to the shell: after a host's
    program, and after the shell ended itself (it may crash at each start) */
 static s32 no_shell __attribute__((section(".data"))) = 0;
@@ -240,12 +240,12 @@ void mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
   memcpy(launch_args, args, args_len);
   launch_len = args_len;
   launch_argc = argc;
+  launch_cleanup = 1;
   restart();
 }
 
 void mxlink_takeover(int argc, const char *args, u32 args_len) {
   exec_kill();
-  launch_cleanup = 1;
   no_shell = 1;
   mxlink_launch(argc, args, args_len, 0);
 }
