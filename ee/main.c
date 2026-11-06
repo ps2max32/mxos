@@ -68,11 +68,12 @@ static u32 crash_return KEPT = 0;
 #define MODULE_DIR "mc0:/MXOS/"
 #define SHELL_PATH MODULE_DIR "MXSHELL.ELF"
 #define MODULE_MEM ((u8 *)0x01000000)
-enum { M_CHIME, M_PS2IP = 5, M_MXIO = 15 };
+enum { M_CHIME, M_PS2IP = 5, M_MXIO = 15, M_MXSOCK = 16 };
 static const char *const module_names[] = {
     "chime",   "poweroff", "ps2dev9", "netman", "smap",   "ps2ip-nm", "udptty",
     "ioptrap", "ps2link",  "sio2man", "mcman",  "mcserv", "padman", "libsd",   "audsrv",
-    "mxio", /* not on an older card: files then go through FILEIO */
+    /* not on an older card: files then go through FILEIO, and there are no sockets */
+    "mxio",    "mxsock",
 };
 #define NMODULES (sizeof module_names / sizeof module_names[0])
 static struct {
@@ -325,7 +326,7 @@ static int read_modules(void) {
   u8 *to = MODULE_MEM;
   for (u32 i = 0; i < NMODULES; i++) {
     int fd = module_open(i), size = fd < 0 ? -1 : mx_fio_lseek(fd, 0, MX_FIO_SEEK_END);
-    if (i == M_MXIO && fd < 0) {
+    if (i >= M_MXIO && fd < 0) {
       modules[i].size = 0;
       continue;
     }
@@ -395,11 +396,22 @@ static void sound_off(void) {
 }
 
 extern void mx__mxio_cleanup(void);
+/* the sockets a program left open: common/include/mxsock.h's MXSOCK_CLOSE_ALL.
+   Not through <mx/net.h>, whose buffers do not fit here */
+#define MXSOCK_SID 0x4D58534B
+#define MXSOCK_CLOSE_ALL 11
+static struct mx_sif_client sock_rpc;
+static s32 sock_io[16] __attribute__((aligned(64)));
+static void close_sockets(void) {
+  if (mx_sif_bind_tries(&sock_rpc, MXSOCK_SID, 2) == 0 && sock_rpc.server)
+    mx_sif_call(&sock_rpc, MXSOCK_CLOSE_ALL, MX_UNCACHED(sock_io), 32, MX_UNCACHED(sock_io + 8), 16);
+}
 static void iop_cleanup(void) {
   /* descriptors 0-2 are the tty's */
   for (int fd = 3; fd < 32; fd++)
     mx_fio_close(fd);
   mx__mxio_cleanup();
+  close_sockets();
   /* an open port goes on writing the pad's state to EE memory */
   if (mx_sif_bind_tries(&pad_rpc, PAD_SID, 2) == 0 && pad_rpc.server) {
     for (int port = 0; port < 2; port++) {
