@@ -11,6 +11,7 @@
 
 #include <mx/bios.h>
 #include <mx/debug.h>
+#include <mx/kernel.h>
 #include <mx/loader.h>
 #include <mx/sif.h>
 #include <mx/string.h>
@@ -110,6 +111,18 @@ static void set_args(int argc, const char *args, u32 len) {
 
 static const char *next_swap;
 void exec_swap(const char *swap) { next_swap = swap; }
+
+/* the kernel's services for libmxk (<mx/kernel.h>) */
+static const char *program_swap;
+static const char *kernel_swap(void) { return program_swap; }
+static const struct mxk_services kernel = {
+    .magic = MX_KERNEL_MAGIC,
+    .version = MX_KERNEL_VERSION,
+    .size = sizeof kernel,
+    .exit = mxlink_return,
+    .launch = mxlink_launch,
+    .swap = kernel_swap,
+};
 
 int exec_elf(int argc, const char *args, u32 args_len) {
   if (user_tid) {
@@ -224,8 +237,10 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   largs.ret = mxlink_return;
   largs.launch_magic = self_end <= LOW ? MX_LOADER_LAUNCH : 0;
   largs.launch = mxlink_launch;
-  largs.swap = next_swap;
+  largs.swap = program_swap = next_swap;
   next_swap = 0;
+  largs.kernel_magic = self_end <= LOW ? MX_KERNEL_MAGIC : 0;
+  largs.kernel = &kernel;
   /* and for the others (ps2sdk's, older maxsdk ones): their Exit */
   if (self_end <= LOW)
     mx_bios_set_syscall(4, mxlink_exit_hook);
