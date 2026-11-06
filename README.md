@@ -50,7 +50,8 @@ What it adds to ps2link:
   just `<directory>.elf` is a game too. The font is Lato (SIL Open Font License), made into
   `shell/font.bin` by `shell/gen-font.py`. Select leaves the shell.
 - The BIOS's TLB is written back at every start (`ee/tlb.c`): ExecPS2 leaves
-  it as it is, so a killed program's VM entries would stay.
+  it as it is, so a killed program's VM entries would stay. mxlink's code,
+  from 0xC0000, is read-only for programs: a wild store there is an exception.
 - `ps2client status` says what it is doing (state, program, programs
   returned, last exit status) and which PS2 it is on: its model
   (`SCPH-70004`) and `rom0:ROMVER`, each `unknown` if the PS2 does not say.
@@ -68,7 +69,7 @@ command, the VU register dumps.
 make all high      # build/tools/mxlink/MXLINK.ELF, mxlink-high.elf
 ```
 
-- `MXLINK.ELF`: resident at 0x94000-0xFF800, below the programs (as ps2link);
+- `MXLINK.ELF`: resident at 0x88000-0xFF800, below the programs;
   the one to install.
 - `MXOS/*.irx`: the IOP modules. mxlink reads them from `mc0:/MXOS` at each
   IOP start, with what the IOP has or else with the ROM's memory card drivers,

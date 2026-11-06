@@ -440,9 +440,10 @@ static void screen(void) {
   const char *ip = if_conf, *mask = ip + strlen(ip) + 1, *gw = mask + strlen(mask) + 1;
   con_line(ROW_NET, CON_WHITE, "Net:    %s  mask %s  gw %s", ip, mask, gw);
   con_line(ROW_HOST, CON_WHITE, "Boot:   %s%s", boot_path, restarts > 1 ? "  (restarted)" : "");
-  extern char __text_start[], _end[];
+  u32 self_start, self_end;
+  exec_self(&self_start, &self_end);
   con_line(ROW_MEM, CON_WHITE, "Memory: mxlink %05x-%05x, programs 00100000-%08x",
-           (u32)(uintptr_t)__text_start, (u32)(uintptr_t)_end, mx_bios_get_memory_size());
+           self_start, self_end, mx_bios_get_memory_size());
   con_line(ROW_HELP, CON_GREY, "ps2client -h %s execee host:<elf> [args]", ip);
   if (last_path[0])
     con_line(ROW_LAST, last_status ? CON_RED : CON_WHITE, "Last:   %s, exit status %d", last_path,

@@ -12,6 +12,8 @@
 #define TLB_N 48
 #define TLB_FIRST 2  /* 0, 1: the scratchpad and the kernel, never changed */
 #define TLB_USED 39  /* the others: unused, V = 0 */
+#define TLB_RESIDENT 13 /* 0x80000-0xFFFFF: mxlink, its code in the upper half */
+#define LO_D 4u
 
 static const struct {
   u32 pm, hi, lo0, lo1;
@@ -69,6 +71,22 @@ static void tlb_write(u32 i, u32 pm, u32 hi, u32 lo0, u32 lo1) {
                    : "r"(i), "r"(pm), "r"(hi), "r"(lo0), "r"(lo1));
 }
 
+/* mxlink's entry as it should be: the upper half without D for the resident
+   one, so a store of a program there is a TLB modified exception. Not the
+   lower half: the kernel writes 0x80000-0x87FFF through it, and without D the
+   PS2 hangs. One tlbwi: the code running here is in it, so it is not cleared
+   first. */
+static void tlb_resident(u32 lo1) {
+  tlb_write(TLB_RESIDENT, bios_tlb[TLB_RESIDENT].pm, bios_tlb[TLB_RESIDENT].hi,
+            bios_tlb[TLB_RESIDENT].lo0, lo1);
+}
+
+void tlb_writable(void) {
+  int was = mx_di();
+  tlb_resident(bios_tlb[TLB_RESIDENT].lo1);
+  mx_irq_restore(was);
+}
+
 /* After ExecPS2, not before it: until then a killed program's vblank handler
    clears the entries it thinks are its own, and with interrupts off through
    ExecPS2 one of its interrupts stays pending until its handler is gone,
@@ -81,6 +99,10 @@ void tlb_restore(void) {
   int was = mx_di();
   for (u32 i = TLB_FIRST; i < TLB_N; i++) {
     u32 pm, hi, lo0, lo1;
+    if (i == TLB_RESIDENT) {
+      differs[i] = 0;
+      continue;
+    }
     tlb_read(i, &pm, &hi, &lo0, &lo1);
     differs[i] = i >= TLB_USED || pm != bios_tlb[i].pm || hi != bios_tlb[i].hi ||
                  lo0 != bios_tlb[i].lo0 || lo1 != bios_tlb[i].lo1;
@@ -92,5 +114,6 @@ void tlb_restore(void) {
       tlb_write(i, 0, 0xE0000000u + (i << 13), 0, 0);
     else if (differs[i])
       tlb_write(i, bios_tlb[i].pm, bios_tlb[i].hi, bios_tlb[i].lo0, bios_tlb[i].lo1);
+  tlb_resident(exec_resident() ? bios_tlb[TLB_RESIDENT].lo1 & ~LO_D : bios_tlb[TLB_RESIDENT].lo1);
   mx_irq_restore(was);
 }

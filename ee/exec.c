@@ -45,9 +45,9 @@ struct thread_param {
 #define MAX_PHDRS 16
 #define LOW 0x00100000u
 #define TOP 0x02000000u
-/* below LOW: loaders (ps2link, mxlink itself at 0x94000), above the EE
+/* below LOW: loaders (ps2link, mxlink itself at 0x88000), above the EE
    kernel; started by ExecPS2 */
-#define LOADER_LOW 0x00090000u
+#define LOADER_LOW 0x00088000u
 #define USER_PRIO 64
 
 static int user_tid; /* 0: no program */
@@ -59,9 +59,20 @@ static int shell, next_shell;
 int exec_running(void) { return user_tid != 0; }
 int exec_in_shell(void) { return user_tid && shell; }
 void exec_shell_next(void) { next_shell = 1; }
+/* What mxlink takes: ee/resident.ld says, mxlink-high (maxsdk's script) is
+   its code up to its stack's end. */
+void exec_self(u32 *start, u32 *end) {
+  extern char __self_start[] __attribute__((weak)), __self_end[] __attribute__((weak));
+  extern char __text_start[], __stack[], __stack_size[];
+  *start = (u32)(uintptr_t)(__self_end ? __self_start : __text_start);
+  *end = __self_end ? (u32)(uintptr_t)__self_end
+                    : (u32)(uintptr_t)__stack + (u32)(uintptr_t)__stack_size;
+}
+
 int exec_resident(void) {
-  extern char __stack[], __stack_size[];
-  return (u32)(uintptr_t)__stack + (u32)(uintptr_t)__stack_size <= LOW;
+  u32 start, end;
+  exec_self(&start, &end);
+  return end <= LOW;
 }
 
 void exec_kill(void) {
@@ -132,9 +143,8 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     return fail(fd, path, "cannot read the program headers");
 
   /* check all before loading any: a bad one leaves memory as it was */
-  extern char __text_start[], __stack[], __stack_size[];
-  u32 self_start = (u32)(uintptr_t)__text_start;
-  u32 self_end = (u32)(uintptr_t)__stack + (u32)(uintptr_t)__stack_size;
+  u32 self_start, self_end;
+  exec_self(&self_start, &self_end);
   int vm = 0, loader = 0;
   for (u32 i = 0; i < eh.phnum; i++) {
     const struct phdr *p = &ph[i];
@@ -192,6 +202,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
        starts MXLINK.ELF so, for a test before it is installed. */
     con_log(CON_YELLOW, "  a loader: started by ExecPS2, mxlink ends");
     mx_debug_flush();
+    tlb_writable();
     mx_bios_exec_ps2((void *)(uintptr_t)eh.entry, 0, largs.args.argc, largs.args.argv);
     return fail(-1, path, "ExecPS2 returned");
   }

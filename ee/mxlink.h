@@ -64,9 +64,13 @@ int exec_in_shell(void);
 void exec_shell_next(void);
 /* Is this the resident mxlink, below the programs (not mxlink-high)? */
 int exec_resident(void);
+/* The memory mxlink takes. */
+void exec_self(u32 *start, u32 *end);
 /* Stop the running program (its thread). */
 void exec_kill(void);
 void tlb_restore(void);
+/* The BIOS's entry for mxlink's code, for a loader that writes there. */
+void tlb_writable(void);
 
 /* the restart (main.c): the IOP reset and mxlink started again, as ps2link
    does on a reset command */

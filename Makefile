@@ -1,7 +1,7 @@
 # mxlink: the EE side of the PS2 loader, on maxsdk (clang), with ps2link's
 # IOP modules.
 #
-#   make            build/tools/mxlink/MXLINK.ELF (at 0x94000, as ps2link: to
+#   make            build/tools/mxlink/MXLINK.ELF (at 0x88000: to
 #                   boot from the PS2's storage)
 #   make high       build/tools/mxlink/mxlink-high.elf (at 0x1E00000: to start
 #                   with ps2client execee from a running ps2link, for tests)
@@ -40,9 +40,10 @@ SRCS = main.c cmd.c exec.c con.c font.c tlb.c
 MODULES = poweroff ps2dev9 netman smap ps2ip-nm udptty ioptrap sio2man mcman mcserv padman \
           libsd audsrv
 
-# resident below the programs' memory, as ps2link: 0x94000 up to the 2 KiB
+# resident below the programs' memory: 0x88000 up to the 2 KiB
 # where ps2link.irx writes the host's commands (0xFF800)
-LOW_LDFLAGS  = --defsym=__mx_base=0x94000 --defsym=__mx_top=0xFF800 --defsym=__mx_stack_size=0x4000
+LOW_LDFLAGS  = --defsym=__mx_base=0x88000 --defsym=__mx_text=0xC0000 --defsym=__mx_top=0xFF800 \
+               --defsym=__mx_stack_size=0x4000
 HIGH_LDFLAGS = --defsym=__mx_base=0x1E00000 --defsym=__mx_top=0x1F00000 --defsym=__mx_stack_size=0x4000
 
 OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/hook.o
@@ -99,7 +100,8 @@ $(OUT)/mxos-fill.elf: tools/mxos-fill.c $(MX_LIB) $(MX_CRT0)
 	$(CC) $(CFLAGS) -c $< -o $(OUT)/obj/mxos-fill.o
 	$(call link,$@,$(MX_CRT0) $(OUT)/obj/mxos-fill.o $(MX_LIB))
 
-$(OUT)/mxlink.elf: $(OBJS) $(MX_LIB) $(MX_CRT0) $(MX_LD)
+$(OUT)/mxlink.elf: MX_LD = ee/resident.ld
+$(OUT)/mxlink.elf: $(OBJS) $(MX_LIB) $(MX_CRT0) ee/resident.ld
 	$(call link,$@,$(LOW_LDFLAGS) $(MX_CRT0) $(OBJS) $(MX_LIB))
 
 # the name ps2link has on the PS2's storage
