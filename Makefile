@@ -44,7 +44,7 @@ CFLAGS += $(if $(EMU),-DMXLINK_EMU)
 SRCS = main.c cmd.c exec.c con.c font.c tlb.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
 MODULES = poweroff ps2dev9 netman smap ps2ip-nm udptty ioptrap sio2man mcman mcserv padman \
-          libsd audsrv
+          libsd audsrv mxio
 
 # resident below the programs' memory: 0x88000 up to the 2 KiB
 # where ps2link.irx writes the host's commands (0xFF800)
@@ -73,12 +73,12 @@ $(OUT)/MXOS/%.irx: $(PS2MAX_IRX)/%.irx
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-# maxsdk's stack in place of ps2sdk's
+# maxsdk's stack in place of ps2sdk's, and its file service
 MAXSDK_IRX = $(PS2MAX)/build/libs/maxsdk/iop
-$(OUT)/MXOS/ps2ip-nm.irx: FORCE
+$(OUT)/MXOS/ps2ip-nm.irx $(OUT)/MXOS/mxio.irx: FORCE
 	$(MAKE) -C $(PS2MAX)/libs/maxsdk/iop
 	@mkdir -p $(dir $@)
-	cp $(MAXSDK_IRX)/ps2ip-nm.irx $@
+	cp $(MAXSDK_IRX)/$(notdir $@) $@
 FORCE:
 
 $(OUT)/MXOS/ps2link.irx: $(PS2LINK_IRX)

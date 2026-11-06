@@ -68,10 +68,11 @@ static u32 crash_return KEPT = 0;
 #define MODULE_DIR "mc0:/MXOS/"
 #define SHELL_PATH MODULE_DIR "MXSHELL.ELF"
 #define MODULE_MEM ((u8 *)0x01000000)
-enum { M_CHIME, M_PS2IP = 5 };
+enum { M_CHIME, M_PS2IP = 5, M_MXIO = 15 };
 static const char *const module_names[] = {
     "chime",   "poweroff", "ps2dev9", "netman", "smap",   "ps2ip-nm", "udptty",
     "ioptrap", "ps2link",  "sio2man", "mcman",  "mcserv", "padman", "libsd",   "audsrv",
+    "mxio", /* not on an older card: files then go through FILEIO */
 };
 #define NMODULES (sizeof module_names / sizeof module_names[0])
 static struct {
@@ -324,6 +325,10 @@ static int read_modules(void) {
   u8 *to = MODULE_MEM;
   for (u32 i = 0; i < NMODULES; i++) {
     int fd = module_open(i), size = fd < 0 ? -1 : mx_fio_lseek(fd, 0, MX_FIO_SEEK_END);
+    if (i == M_MXIO && fd < 0) {
+      modules[i].size = 0;
+      continue;
+    }
     if (size <= 0 || mx_fio_lseek(fd, 0, MX_FIO_SEEK_SET) != 0 ||
         mx_fio_read(fd, to, (u32)size) != size) {
       con_log(CON_RED, "IOP module %s%s.irx: cannot read it", MODULE_DIR, module_names[i]);
@@ -389,10 +394,12 @@ static void sound_off(void) {
     mx_fio_close(fd);
 }
 
+extern void mx__mxio_cleanup(void);
 static void iop_cleanup(void) {
   /* descriptors 0-2 are the tty's */
   for (int fd = 3; fd < 32; fd++)
     mx_fio_close(fd);
+  mx__mxio_cleanup();
   /* an open port goes on writing the pad's state to EE memory */
   if (mx_sif_bind_tries(&pad_rpc, PAD_SID, 2) == 0 && pad_rpc.server) {
     for (int port = 0; port < 2; port++) {
@@ -440,7 +447,7 @@ static int boot_iop(void) {
     con_log(CON_RED, "the chime did not run: a program's sound may go on");
   status_state(ST_BOOT, "IOP modules");
   for (u32 i = M_CHIME + 1; i < NMODULES; i++)
-    if (load(i, i == M_PS2IP ? if_conf : 0, i == M_PS2IP ? if_conf_len : 0) < 0)
+    if (modules[i].size && load(i, i == M_PS2IP ? if_conf : 0, i == M_PS2IP ? if_conf_len : 0) < 0)
       return -1;
   iop_last = mx_iop_last_module();
   return 0;
