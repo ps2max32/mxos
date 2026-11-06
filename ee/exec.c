@@ -11,6 +11,7 @@
 
 #include <mx/bios.h>
 #include <mx/debug.h>
+#include <mx/iop.h>
 #include <mx/kernel.h>
 #include <mx/loader.h>
 #include <mx/sif.h>
@@ -112,6 +113,8 @@ static void set_args(int argc, const char *args, u32 len) {
 static const char *next_swap;
 void exec_swap(const char *swap) { next_swap = swap; }
 
+void mx__sif_waits(u32 out[4]);
+
 /* the kernel's services for libmxk (<mx/kernel.h>) */
 static const char *program_swap;
 static const char *kernel_swap(void) { return program_swap; }
@@ -122,6 +125,15 @@ static const struct mxk_services kernel = {
     .exit = mxlink_return,
     .launch = mxlink_launch,
     .swap = kernel_swap,
+    .sif_bind_tries = mx_sif_bind_tries,
+    .sif_bound = mx_sif_bound,
+    .sif_call = mx__sif_call,
+    .sif_call_async = mx_sif_call_async,
+    .sif_wait = mx_sif_wait,
+    .sif_serve = mx_sif_serve,
+    .iop_read = mx_iop_read,
+    .iop_reset = mx_iop_reset,
+    .sif_waits = mx__sif_waits,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {
