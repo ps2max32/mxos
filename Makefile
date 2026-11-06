@@ -73,6 +73,14 @@ $(OUT)/MXOS/%.irx: $(PS2MAX_IRX)/%.irx
 	@mkdir -p $(dir $@)
 	cp $< $@
 
+# maxsdk's stack in place of ps2sdk's
+MAXSDK_IRX = $(PS2MAX)/build/libs/maxsdk/iop
+$(OUT)/MXOS/ps2ip-nm.irx: FORCE
+	$(MAKE) -C $(PS2MAX)/libs/maxsdk/iop
+	@mkdir -p $(dir $@)
+	cp $(MAXSDK_IRX)/ps2ip-nm.irx $@
+FORCE:
+
 $(OUT)/MXOS/ps2link.irx: $(PS2LINK_IRX)
 	@mkdir -p $(dir $@)
 	cp $< $@
