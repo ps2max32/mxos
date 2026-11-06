@@ -44,6 +44,7 @@ struct thread_param {
 };
 
 #define PT_LOAD 1
+#define PF_X 1
 #define MAX_PHDRS 16
 #define LOW 0x00100000u
 #define TOP 0x02000000u
@@ -114,6 +115,16 @@ static const char *next_swap;
 void exec_swap(const char *swap) { next_swap = swap; }
 
 void mx__sif_waits(u32 out[4]);
+void mx__exception_vector(void);
+extern u32 mx__text_lo, mx__text_hi;
+
+/* a libmxk program's text for its crash report (mx_exception_init) */
+static const char **program_note;
+const char *const *exec_note(void) { return program_note; }
+static void exception_setup(const char **note) {
+  program_note = note;
+  mx_exception_init();
+}
 
 /* the kernel's services for libmxk (<mx/kernel.h>) */
 static const char *program_swap;
@@ -134,6 +145,9 @@ static const struct mxk_services kernel = {
     .iop_read = mx_iop_read,
     .iop_reset = mx_iop_reset,
     .sif_waits = mx__sif_waits,
+    .exception_vector = mx__exception_vector,
+    .exception_setup = exception_setup,
+    .crash = mxlink_crash,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {
@@ -198,9 +212,13 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   }
   if (loader && vm)
     return fail(fd, path, "a loader (below 1 MiB) with VM segments");
-  u32 bytes = 0;
+  u32 bytes = 0, text_lo = ~0u, text_hi = 0;
   for (u32 i = 0; i < eh.phnum; i++) {
     const struct phdr *p = &ph[i];
+    if (p->type == PT_LOAD && (p->flags & PF_X)) {
+      text_lo = p->vaddr < text_lo ? p->vaddr : text_lo;
+      text_hi = p->vaddr + p->memsz > text_hi ? p->vaddr + p->memsz : text_hi;
+    }
     if (p->type != PT_LOAD || p->memsz == 0 || (p->vaddr >= MX_VM_BASE && p->vaddr < MX_VM_LIMIT))
       continue;
     u8 *d = (u8 *)(uintptr_t)p->vaddr;
@@ -257,6 +275,9 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   if (self_end <= LOW)
     mx_bios_set_syscall(4, mxlink_exit_hook);
 
+  program_note = 0;
+  mx__text_lo = text_lo;
+  mx__text_hi = text_hi;
   exec_started(path);
   status_state(shell ? ST_MENU : ST_RUNNING, path);
   /* from here the program owns the IOP's SIF replies and the screen: the

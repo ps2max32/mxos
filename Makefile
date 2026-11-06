@@ -87,8 +87,11 @@ $(OUT)/shell/font.o: shell/font.S shell/font.bin
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OUT)/shell/shell.elf: $(SHELL_OBJS) $(MX_LIB) $(MX_CRT0) $(MX_LD)
-	$(call link,$@,$(MX_CRT0) $(SHELL_OBJS) $(MX_LIB))
+# libmxk in core: the kernel's services, without VM
+SHELL_LIB = $(MAXSDK_OUT)/libmxk.a
+$(SHELL_LIB): $(MX_LIB)
+$(OUT)/shell/shell.elf: $(SHELL_OBJS) $(SHELL_LIB) $(MX_CRT0) $(MX_LD)
+	$(call link,$@,$(MX_CRT0) $(SHELL_OBJS) $(SHELL_LIB))
 
 $(OUT)/MXOS/MXSHELL.ELF: $(OUT)/shell/shell.elf
 	@mkdir -p $(dir $@)

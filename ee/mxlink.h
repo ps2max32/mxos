@@ -5,6 +5,7 @@
    ps2client through ps2link's IOP module (ps2link.irx) and protocol, and
    loads programs itself, those linked into maxsdk's VM too. */
 
+#include <mx/debug.h>
 #include <mx/types.h>
 
 #define MXLINK_VERSION "0.1"
@@ -96,5 +97,10 @@ void exec_swap(const char *swap);
 /* programs returned to mxlink since it booted, the last one's exit status */
 u32 exec_returns(void);
 s32 exec_last_status(void);
+/* The program's text for the report of a crash, 0 for a program without the
+   kernel's exceptions. */
+const char *const *exec_note(void);
+/* The crash of the last program: 1, or 0 if it did not crash. */
+int mxlink_crash(struct mx_crash *c);
 
 #endif

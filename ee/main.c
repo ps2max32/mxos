@@ -47,6 +47,12 @@ static s32 launch_cleanup __attribute__((section(".data"))) = 0; /* the program 
    program, and after the shell ended itself (it may crash at each start) */
 static s32 no_shell __attribute__((section(".data"))) = 0;
 
+/* The crash of the program that ended as return number crash_return: kept
+   over the restart, for the screen and the shell (mx_crash_last). */
+static struct mx_crash crash __attribute__((section(".data"))) = {0};
+static char crash_note[MX_CRASH_NOTE] __attribute__((section(".data"))) = {0};
+static u32 crash_return __attribute__((section(".data"))) = 0;
+
 #define DEFAULT_IP "192.168.1.10"
 #define DEFAULT_NETMASK "255.255.255.0"
 #define DEFAULT_GW "192.168.1.0"
@@ -203,6 +209,7 @@ void mxlink_restart(void) {
   exec_kill();
   iop_last = 0; /* ps2link.irx gave up host: for this reset: never kept */
   no_shell = 0;
+  crash_return = 0;
   restart();
 }
 
@@ -227,6 +234,32 @@ void mxlink_return(int status) {
   returns++;
   last_status = status;
   restart();
+}
+
+/* In the report of exception.c, on the kernel's stack. A libmxk program's
+   SIF is the kernel's, so its report reaches the host too; a ps2sdk program
+   has its own, and the report stays on the serial port. */
+void mx__crash_kept(struct mx_crash *c) {
+  const char *const *np = exec_note();
+  const char *note = np ? *np : c->note;
+  if (note && ((u32)(uintptr_t)note < 0x00080000u || (u32)(uintptr_t)note >= 0x02000000u))
+    note = 0; /* not in core */
+  u32 n = 0;
+  for (; note && note[n] && n < sizeof crash_note - 1; n++)
+    crash_note[n] = note[n];
+  crash_note[n] = 0;
+  c->note = n ? crash_note : 0;
+  crash = *c;
+  crash_return = returns + 1;
+  if (np)
+    mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
+}
+
+int mxlink_crash(struct mx_crash *c) {
+  if (!crash_return || crash_return != returns)
+    return 0;
+  *c = crash;
+  return 1;
 }
 
 void mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
@@ -448,6 +481,9 @@ static void screen(void) {
   if (last_path[0])
     con_line(ROW_LAST, last_status ? CON_RED : CON_WHITE, "Last:   %s, exit status %d", last_path,
              (int)last_status);
+  if (crash_return && crash_return == returns)
+    con_line(ROW_LAST + 1, CON_RED, "Crash:  %s at %08x, address %08x, ra %08x", crash.what,
+             crash.epc, crash.badvaddr, crash.ra);
 }
 
 int main(int argc, char **argv) {
@@ -483,6 +519,8 @@ int main(int argc, char **argv) {
   if (returned)
     con_log(last_status ? CON_RED : CON_GREEN, "%s returned, exit status %d", last_path,
             (int)last_status);
+  if (returned && crash_return == returns && crash.note)
+    con_log(CON_RED, "%s", crash.note);
   int came_back = (int)returned;
   returned = 0;
   con_log(CON_GREEN, "mxlink %s ready", MXLINK_VERSION);
