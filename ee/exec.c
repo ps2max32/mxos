@@ -117,13 +117,28 @@ void exec_swap(const char *swap) { next_swap = swap; }
 void mx__sif_waits(u32 out[4]);
 void mx__exception_vector(void);
 extern u32 mx__text_lo, mx__text_hi;
+extern const char *mx__loader_swap;
+void mx__fio_base(const char *argv0);
 
 /* a libmxk program's text for its crash report (mx_exception_init) */
 static const char **program_note;
 const char *const *exec_note(void) { return program_note; }
+/* Called by every libmxk program: its SIF is the kernel's, so the kernel's
+   reports may go to the tty too. note: 0, the VM being the kernel's (a
+   program of version 3 has its own). */
 static void exception_setup(const char **note) {
   program_note = note;
   mx_exception_init();
+  mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
+}
+
+static void kernel_program(void *heap_lo, void *heap_hi, void *vm_lo, void *vm_hi) {
+  mx__heap_range(heap_lo, heap_hi);
+  mx__vm_image_range(vm_lo, vm_hi);
+}
+
+static void kernel_heaps(struct mx_heap *h[3]) {
+  h[0] = mx_heap_pinned, h[1] = mx_heap_stream, h[2] = mx_heap_paged;
 }
 
 /* the kernel's services for libmxk (<mx/kernel.h>) */
@@ -148,6 +163,13 @@ static const struct mxk_services kernel = {
     .exception_vector = mx__exception_vector,
     .exception_setup = exception_setup,
     .crash = mxlink_crash,
+    .program = kernel_program,
+    .heaps = kernel_heaps,
+    .mx__core_fault = mx__core_fault,
+    .mx__paddr_fault = mx__paddr_fault,
+    .mx_tty_write = mx_tty_write,
+#define MXK_ENTRY(ret, name, params, args) .name = name,
+    MXK_CALLS(MXK_ENTRY)
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {
@@ -267,7 +289,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   largs.ret = mxlink_return;
   largs.launch_magic = self_end <= LOW ? MX_LOADER_LAUNCH : 0;
   largs.launch = mxlink_launch;
-  largs.swap = program_swap = next_swap;
+  largs.swap = program_swap = mx__loader_swap = next_swap;
   next_swap = 0;
   largs.kernel_magic = self_end <= LOW ? MX_KERNEL_MAGIC : 0;
   largs.kernel = &kernel;
@@ -276,6 +298,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     mx_bios_set_syscall(4, mxlink_exit_hook);
 
   program_note = 0;
+  mx__fio_base(path);
   mx__text_lo = text_lo;
   mx__text_hi = text_hi;
   exec_started(path);

@@ -8,7 +8,7 @@ What it adds to ps2link:
 
 - It loads ELFs itself, on the EE: programs linked into maxsdk's virtual
   memory (`MX_MEMORY=vm`) run directly (`ps2client execee host:app.elf`), no
-  `mxload.elf` in between. Other programs, ps2sdk's included, get ps2link's
+  nothing in between. Other programs, ps2sdk's included, get ps2link's
   arguments as they are.
 - An ELF below 1 MiB (a loader: another mxlink, ps2link) is started by
   ExecPS2 and takes over the PS2. An ELF over mxlink itself is refused.

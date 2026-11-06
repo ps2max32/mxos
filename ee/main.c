@@ -4,8 +4,8 @@
 
    As ps2link, mxlink starts twice: the first time (booted from a memory
    card, or started by ps2link or another loader) it reads IPCONFIG.DAT
-   next to its ELF with the IOP as the loader left it, keeps it in .data
-   (not cleared at a start) and starts itself again by ExecPS2, which
+   next to its ELF with the IOP as the loader left it, keeps it (KEPT) and
+   starts itself again by ExecPS2, which
    resets the EE kernel: the loader's threads and interrupt handlers are
    gone. A reset command from the host (mxlink_restart) does the same
    ExecPS2. */
@@ -16,42 +16,47 @@
 #include <mx/gs.h>
 #include <mx/hw/regs.h>
 #include <mx/iop.h>
+#include <mx/kernel.h>
 #include <mx/sif.h>
 #include <mx/string.h>
 #include <mx/timer.h>
 
 #include "mxlink.h"
 
-/* kept across ExecPS2 (.data is not cleared, .bss is): the configuration
-   for ps2ip ("ip\0mask\0gw\0"), and the path mxlink was booted from */
+/* What survives ExecPS2: .bss is cleared and .data set back (hook.S), so a
+   start finds every variable as linked, the libraries' too. */
+#define KEPT __attribute__((section(".kept")))
+
+/* the configuration for ps2ip ("ip\0mask\0gw\0"), and the path mxlink was
+   booted from */
 #define CONF_MAX 64
-static char if_conf[CONF_MAX] __attribute__((section(".data")));
-static u32 if_conf_len __attribute__((section(".data"))) = 0;
-static char boot_path[256] __attribute__((section(".data")));
-static u32 restarts __attribute__((section(".data"))) = 0;
+static char if_conf[CONF_MAX] KEPT;
+static u32 if_conf_len KEPT = 0;
+static char boot_path[256] KEPT;
+static u32 restarts KEPT = 0;
 /* the program's return (mxlink_return): its path and exit status, and the
    IOP's highest module id after mxlink's modules (a higher one after the
    program: it loaded modules, the IOP is reset) */
-static char last_path[256] __attribute__((section(".data")));
-static u32 returned __attribute__((section(".data"))) = 0;
-static s32 last_status __attribute__((section(".data"))) = 0;
-static s32 iop_last __attribute__((section(".data"))) = 0;
-static u32 returns __attribute__((section(".data"))) = 0; /* programs returned so far */
+static char last_path[256] KEPT;
+static u32 returned KEPT = 0;
+static s32 last_status KEPT = 0;
+static s32 iop_last KEPT = 0;
+static u32 returns KEPT = 0; /* programs returned so far */
 /* mx_loader_launch: the program to start after the restart */
-static s32 launch_argc __attribute__((section(".data"))) = 0;
-static u32 launch_len __attribute__((section(".data"))) = 0;
-static char launch_args[256] __attribute__((section(".data"))) = {0};
-static char launch_swap[64] __attribute__((section(".data"))) = {0};
-static s32 launch_cleanup __attribute__((section(".data"))) = 0; /* the program before it ended */
+static s32 launch_argc KEPT = 0;
+static u32 launch_len KEPT = 0;
+static char launch_args[256] KEPT = {0};
+static char launch_swap[64] KEPT = {0};
+static s32 launch_cleanup KEPT = 0; /* the program before it ended */
 /* the next return goes to the text screen, not to the shell: after a host's
    program, and after the shell ended itself (it may crash at each start) */
-static s32 no_shell __attribute__((section(".data"))) = 0;
+static s32 no_shell KEPT = 0;
 
 /* The crash of the program that ended as return number crash_return: kept
    over the restart, for the screen and the shell (mx_crash_last). */
-static struct mx_crash crash __attribute__((section(".data"))) = {0};
-static char crash_note[MX_CRASH_NOTE] __attribute__((section(".data"))) = {0};
-static u32 crash_return __attribute__((section(".data"))) = 0;
+static struct mx_crash crash KEPT = {0};
+static char crash_note[MX_CRASH_NOTE] KEPT = {0};
+static u32 crash_return KEPT = 0;
 
 #define DEFAULT_IP "192.168.1.10"
 #define DEFAULT_NETMASK "255.255.255.0"
@@ -191,7 +196,7 @@ static void read_conf(void) {
 
 static void restart(void) __attribute__((noreturn));
 static void restart(void) {
-  extern char __start[], _gp[];
+  extern char mxlink_start[], _gp[];
   char *argv[1] = {boot_path};
   restarts++;
   mx_debug_flush();
@@ -200,7 +205,7 @@ static void restart(void) {
      host now would end in the kernel's "DMAC(5) Handler does not exist" and
      its break. cmd_init turns it on again. */
   mx_bios_disable_dmac(MX_DMAC_SIF0);
-  mx_bios_exec_ps2(__start, _gp, 1, argv);
+  mx_bios_exec_ps2(mxlink_start, _gp, 1, argv);
   for (;;)
     ;
 }
@@ -236,12 +241,10 @@ void mxlink_return(int status) {
   restart();
 }
 
-/* In the report of exception.c, on the kernel's stack. A libmxk program's
-   SIF is the kernel's, so its report reaches the host too; a ps2sdk program
-   has its own, and the report stays on the serial port. */
+/* In the report of exception.c, on the kernel's stack. */
 void mx__crash_kept(struct mx_crash *c) {
   const char *const *np = exec_note();
-  const char *note = np ? *np : c->note;
+  const char *note = np && *np ? *np : c->note;
   if (note && ((u32)(uintptr_t)note < 0x00080000u || (u32)(uintptr_t)note >= 0x02000000u))
     note = 0; /* not in core */
   u32 n = 0;
@@ -251,8 +254,7 @@ void mx__crash_kept(struct mx_crash *c) {
   c->note = n ? crash_note : 0;
   crash = *c;
   crash_return = returns + 1;
-  if (np)
-    mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
+  mx__fio_crash();
 }
 
 int mxlink_crash(struct mx_crash *c) {
@@ -486,8 +488,48 @@ static void screen(void) {
              crash.epc, crash.badvaddr, crash.ra);
 }
 
+#ifdef MXLINK_EMU
+/* The IOP as PCSX2 starts it, and the program from host:mxload.txt: its path
+   and arguments, in words. The program's end marker ends the run. */
+static void emu_main(void) {
+  static char args[256];
+  con_init();
+  if (returned) {
+    mx_printf("mxlink: %s returned, exit status %d\n", last_path, (int)last_status);
+    stopped();
+  }
+  restarts = 1;
+  int fd = mx_sif_init() < 0 ? -1 : mx_fio_open("host:mxload.txt", MX_FIO_RDONLY);
+  int n = fd < 0 ? -1 : mx_fio_read(fd, args, sizeof args - 1);
+  if (fd >= 0)
+    mx_fio_close(fd);
+  if (n <= 0) {
+    mx_printf("mxlink: no host:mxload.txt\n");
+    stopped();
+  }
+  int words = 0;
+  u32 len = 0;
+  for (int i = 0; i < n;) {
+    while (i < n && args[i] <= ' ')
+      i++;
+    if (i == n)
+      break;
+    while (i < n && args[i] > ' ')
+      args[len++] = args[i++];
+    args[len++] = 0;
+    words++;
+  }
+  if (exec_elf(words, args, len) < 0)
+    stopped();
+  mx_bios_exit_delete_thread();
+}
+#endif
+
 int main(int argc, char **argv) {
   tlb_restore();
+#ifdef MXLINK_EMU
+  emu_main();
+#endif
   if (!restarts) {
     /* the first start: the loader's IOP, its threads and handlers */
     u32 n = argc > 0 && argv[0] ? strlen(argv[0]) : 0;

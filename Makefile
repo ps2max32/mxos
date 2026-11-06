@@ -5,6 +5,9 @@
 #                   boot from the PS2's storage)
 #   make high       build/tools/mxlink/mxlink-high.elf (at 0x1E00000: to start
 #                   with ps2client execee from a running ps2link, for tests)
+#   make emu        build/tools/mxlink-emu/mxlink.elf:
+#                   the kernel for PCSX2: libmxk programs need one, and it has
+#                   no network there; it starts what host:mxload.txt says
 #   make IOP_CLANG=1 ...
 #                   the same in build/tools/mxlink-clang, with the IOP modules
 #                   compiled by clang instead of ps2dev's IOP gcc
@@ -34,6 +37,9 @@ include $(PS2MAX)/libs/maxsdk/mk/maxsdk.mk
 
 # SHOT=1: for tests on PCSX2, the screen saved where the start stops
 CFLAGS += $(if $(SHOT),-DMXLINK_SHOT)
+# EMU=1 (make emu): the kernel for PCSX2, without network, IOP
+# modules or commands: it starts the program in host:mxload.txt
+CFLAGS += $(if $(EMU),-DMXLINK_EMU)
 
 SRCS = main.c cmd.c exec.c con.c font.c tlb.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
@@ -44,13 +50,16 @@ MODULES = poweroff ps2dev9 netman smap ps2ip-nm udptty ioptrap sio2man mcman mcs
 # where ps2link.irx writes the host's commands (0xFF800)
 LOW_LDFLAGS  = --defsym=__mx_base=0x88000 --defsym=__mx_text=0xC0000 --defsym=__mx_top=0xFF800 \
                --defsym=__mx_stack_size=0x4000
-HIGH_LDFLAGS = --defsym=__mx_base=0x1E00000 --defsym=__mx_top=0x1F00000 --defsym=__mx_stack_size=0x4000
+HIGH_LDFLAGS = --defsym=__mx_base=0x1E00000 --defsym=__mx_text=0x1E40000 --defsym=__mx_top=0x1F00000 \
+               --defsym=__mx_stack_size=0x4000
 
 OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/hook.o
 
 all: $(OUT)/MXLINK.ELF $(OUT)/iop/mxroot.irx modules
 modules: $(MODULES:%=$(OUT)/MXOS/%.irx) $(OUT)/MXOS/ps2link.irx $(OUT)/MXOS/chime.irx
 high: $(OUT)/mxlink-high.elf
+emu:
+	$(MAKE) EMU=1 OUT=$(OUT)-emu $(OUT)-emu/mxlink.elf
 
 $(OUT)/obj/%.o: ee/%.c ee/mxlink.h $(MX_HDRS)
 	@mkdir -p $(dir $@)
@@ -103,16 +112,20 @@ $(OUT)/mxos-fill.elf: tools/mxos-fill.c $(MX_LIB) $(MX_CRT0)
 	$(CC) $(CFLAGS) -c $< -o $(OUT)/obj/mxos-fill.o
 	$(call link,$@,$(MX_CRT0) $(OUT)/obj/mxos-fill.o $(MX_LIB))
 
+# the kernel: maxsdk with the VM
+KERNEL_LIB = $(MAXSDK_OUT)/libmxkern.a
+$(KERNEL_LIB): $(MX_LIB)
 $(OUT)/mxlink.elf: MX_LD = ee/resident.ld
-$(OUT)/mxlink.elf: $(OBJS) $(MX_LIB) $(MX_CRT0) ee/resident.ld
-	$(call link,$@,$(LOW_LDFLAGS) $(MX_CRT0) $(OBJS) $(MX_LIB))
+$(OUT)/mxlink.elf: $(OBJS) $(KERNEL_LIB) $(MX_CRT0) ee/resident.ld
+	$(call link,$@,$(LOW_LDFLAGS) $(MX_CRT0) $(OBJS) $(KERNEL_LIB))
 
 # the name ps2link has on the PS2's storage
 $(OUT)/MXLINK.ELF: $(OUT)/mxlink.elf
 	$(LLVM)/llvm-strip -o $@ $<
 
-$(OUT)/mxlink-high.elf: $(OBJS) $(MX_LIB) $(MX_CRT0) $(MX_LD)
-	$(call link,$@,$(HIGH_LDFLAGS) $(MX_CRT0) $(OBJS) $(MX_LIB))
+$(OUT)/mxlink-high.elf: MX_LD = ee/resident.ld
+$(OUT)/mxlink-high.elf: $(OBJS) $(KERNEL_LIB) $(MX_CRT0) ee/resident.ld
+	$(call link,$@,$(HIGH_LDFLAGS) $(MX_CRT0) $(OBJS) $(KERNEL_LIB))
 
 # ---- the IOP modules (iop/: ps2link's and the chime, ps2sdk's IOP build rules) -------------
 
@@ -171,4 +184,4 @@ $(OUT)/iop/%.irx: $(OUT)/iop/%.elf
 clean:
 	rm -rf $(OUT)
 
-.PHONY: all high modules mxos-fill shell clean
+.PHONY: all high emu modules mxos-fill shell clean

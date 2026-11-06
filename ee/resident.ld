@@ -7,7 +7,7 @@
    exception. __self_start and __self_end: what mxlink takes (ee/exec.c). */
 
 OUTPUT_ARCH(mips)
-ENTRY(__start)
+ENTRY(mxlink_start)
 
 MEMORY {
   ram : ORIGIN = __mx_base, LENGTH = __mx_top - __mx_base
@@ -23,7 +23,7 @@ SECTIONS {
   __self_start = __mx_base;
   __self_end = __mx_top;
 
-  .data ORIGIN(ram) : { *(.data .data.*) } >ram :data
+  .data ORIGIN(ram) : { __data_start = .; *(.data .data.*) } >ram :data
 
   _gp = ALIGN(128) + 0x7ff0;
   .sdata : ALIGN(128) { *(.lit4) *(.lit8) *(.sdata .sdata.*) } >ram
@@ -31,6 +31,11 @@ SECTIONS {
   /* Packet data: aligned to a cache line, so a write back never touches a
      neighbour. */
   .mx.packets : ALIGN(64) { *(.mx.packets .mx.packets.*) . = ALIGN(64); } >ram
+  __data_end = .;
+
+  /* What survives a restart (ExecPS2); all before __data_end is set back by
+     mxlink_start, from __data_copy. */
+  .kept : ALIGN(16) { KEEP(*(.kept)) } >ram
 
   .bss (NOLOAD) : ALIGN(128) {
     __bss_start = .;
@@ -43,6 +48,7 @@ SECTIONS {
     . = ALIGN(16);
     __bss_end = .;
   } >ram
+  .data_copy (NOLOAD) : { __data_copy = .; . += __data_end - __data_start; } >ram
   _end = .;
 
   .text __mx_text : {
