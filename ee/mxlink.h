@@ -49,6 +49,18 @@ int status_get(void);
 
 int cmd_init(void);
 
+/* ---- the pad (pad.c) ------------------------------------------------- */
+
+struct mx_pad_state;
+/* the pad's settings, applied to what programs read */
+struct pad_settings {
+  u8 swap_ports; /* port 0 reads port 1 and the other way round */
+  u8 swap_xo;    /* Cross and Circle swapped */
+};
+extern struct pad_settings pad_settings;
+/* <mx/kernel.h>'s pad_read */
+int pad_read(int port, struct mx_pad_state *s, int sticks);
+
 /* ---- programs (exec.c) -------------------------------------------------- */
 
 /* Load the ELF at path and start it in a thread of its own with the
