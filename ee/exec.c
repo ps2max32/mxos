@@ -173,6 +173,10 @@ static const struct mxk_services kernel = {
     .fio_ending = mx__fio_ending,
     .pad_init = mx__pad_init,
     .pad_read = pad_read,
+    .gs_display = home_gs_display,
+    .gs_mode = home_gs_mode,
+    .home_wanted = home_wanted,
+    .home_run = home_run,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {

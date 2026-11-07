@@ -239,6 +239,7 @@ void mxlink_restart(void) {
 }
 
 u32 exec_returns(void) { return returns; }
+const char *status_program(void) { return last_path; }
 s32 exec_last_status(void) { return last_status; }
 
 void exec_started(const char *path) {

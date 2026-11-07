@@ -23,5 +23,6 @@ int pad_read(int port, struct mx_pad_state *s, int sticks) {
   int r = mx__pad_read(port, s, sticks);
   if (pad_settings.swap_xo)
     s->buttons = swap_bits(s->buttons, MX_PAD_CROSS, MX_PAD_CIRCLE);
+  s->buttons = home_filter(s->buttons);
   return r;
 }

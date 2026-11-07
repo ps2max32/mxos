@@ -61,6 +61,18 @@ extern struct pad_settings pad_settings;
 /* <mx/kernel.h>'s pad_read */
 int pad_read(int port, struct mx_pad_state *s, int sticks);
 
+/* ---- the home menu (home.c): <mx/kernel.h>'s version 7 ------------------ */
+
+struct mx_video_mode;
+void home_gs_display(const u64 *regs, u32 mask);
+void home_gs_mode(const struct mx_video_mode *m);
+u32 home_wanted(void);
+int home_run(u32 page, u32 pages);
+/* the buttons a program gets: the combination taken for the menu */
+u32 home_filter(u32 buttons);
+/* the running program's path (main.c) */
+const char *status_program(void);
+
 /* ---- programs (exec.c) -------------------------------------------------- */
 
 /* Load the ELF at path and start it in a thread of its own with the
