@@ -170,6 +170,7 @@ static const struct mxk_services kernel = {
     .mx_tty_write = mx_tty_write,
 #define MXK_ENTRY(ret, name, params, args) .name = name,
     MXK_CALLS(MXK_ENTRY)
+    .fio_ending = mx__fio_ending,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {
