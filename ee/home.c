@@ -217,7 +217,7 @@ static int draw(u32 page) {
 /* ---- the menu ------------------------------------------------------------- */
 
 /* maxsdk's irq.c: one more function at each vblank start */
-void mx__irq_vbon_hook(void (*fn)(void));
+int mx__irq_vbon_hook(void (*fn)(void));
 static int vbl_sema = -1;
 static void vblank(void) {
   if (menu_up && vbl_sema >= 0)
@@ -270,8 +270,12 @@ int home_run(u32 page, u32 pages) {
     return 0;
   }
   if (vbl_sema < 0) {
-    vbl_sema = mx_sema_create(0, 1);
-    mx__irq_vbon_hook(vblank);
+    int sema = mx_sema_create(0, 1);
+    if (sema < 0 || mx__irq_vbon_hook(vblank) < 0) {
+      quit_now = 1; /* no vblanks for the menu: the combination ends it */
+      return 0;
+    }
+    vbl_sema = sema;
   }
   sel = I_RESUME;
   if (draw(page) < 0) {
