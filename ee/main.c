@@ -70,7 +70,7 @@ static u32 crash_return KEPT = 0;
 #define MODULE_MEM ((u8 *)0x01000000)
 enum {
   M_CHIME, M_MXDEV9 = 2, M_MXETH, M_MXNET, M_DEV9, M_NETMAN, M_SMAP, M_PS2IP,
-  M_MXIO = 18, M_MXSOCK = 19
+  M_MXIO = 18, M_MXSOCK = 19, M_MXFAST = 20
 };
 static const char *const module_names[] = {
     "chime", "poweroff",
@@ -80,6 +80,8 @@ static const char *const module_names[] = {
     "udptty", "ioptrap", "ps2link", "sio2man", "mcman", "mcserv", "padman", "libsd", "audsrv",
     /* not on an older card: files then go through FILEIO, and there are no sockets */
     "mxio", "mxsock",
+    /* the fast path for host: files, on maxsdk's drivers only (ps2ip-nm has it in it) */
+    "mxfast",
 };
 #define OPTIONAL(i) ((i) >= M_MXIO || ((i) >= M_MXDEV9 && (i) <= M_MXNET))
 /* maxsdk's network drivers did not load: ps2sdk's from now on */
@@ -501,7 +503,7 @@ reset:
   for (u32 i = M_CHIME + 1; i < NMODULES; i++) {
     int stack = i == M_MXNET || i == M_PS2IP;
     if (!modules[i].size || (i >= M_MXDEV9 && i <= M_MXNET && !mx_net) ||
-        (i >= M_DEV9 && i <= M_PS2IP && mx_net))
+        (i >= M_DEV9 && i <= M_PS2IP && mx_net) || (i == M_MXFAST && !mx_net))
       continue;
     if (load(i, stack ? if_conf : 0, stack ? if_conf_len : 0) < 0) {
       if (i > M_MXNET || !mx_net)
