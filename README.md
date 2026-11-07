@@ -73,7 +73,10 @@ make all high      # build/tools/mxlink/MXLINK.ELF, mxlink-high.elf
   the one to install.
 - `MXOS/*.irx`: the IOP modules. mxlink reads them from `mc0:/MXOS` at each
   IOP start, with what the IOP has or else with the ROM's memory card drivers,
-  so it needs them there: without them it has no network.
+  so it needs them there: without them it has no network. The network runs on
+  maxsdk's drivers (`mxdev9`, `mxeth`, `mxnet`) if all three are there; if one
+  is missing or does not load, mxlink resets the IOP and uses ps2sdk's
+  (`ps2dev9`, `netman`, `smap`, `ps2ip-nm`), which stay on the card for that.
 - `mxlink-high.elf`: the same at 0x1E00000, to try a build without
   installing it: from a running loader, `ps2client execee
   host:mxlink-high.elf` (its IOP reset ends the connection: expected), then

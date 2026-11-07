@@ -68,13 +68,22 @@ static u32 crash_return KEPT = 0;
 #define MODULE_DIR "mc0:/MXOS/"
 #define SHELL_PATH MODULE_DIR "MXSHELL.ELF"
 #define MODULE_MEM ((u8 *)0x01000000)
-enum { M_CHIME, M_PS2IP = 5, M_MXIO = 15, M_MXSOCK = 16 };
-static const char *const module_names[] = {
-    "chime",   "poweroff", "ps2dev9", "netman", "smap",   "ps2ip-nm", "udptty",
-    "ioptrap", "ps2link",  "sio2man", "mcman",  "mcserv", "padman", "libsd",   "audsrv",
-    /* not on an older card: files then go through FILEIO, and there are no sockets */
-    "mxio",    "mxsock",
+enum {
+  M_CHIME, M_MXDEV9 = 2, M_MXETH, M_MXNET, M_DEV9, M_NETMAN, M_SMAP, M_PS2IP,
+  M_MXIO = 18, M_MXSOCK = 19
 };
+static const char *const module_names[] = {
+    "chime", "poweroff",
+    /* the network: maxsdk's drivers (libs/maxsdk/docs/iop-drivers.md) if all
+       three are on the card and load, else ps2sdk's */
+    "mxdev9", "mxeth", "mxnet", "ps2dev9", "netman", "smap", "ps2ip-nm",
+    "udptty", "ioptrap", "ps2link", "sio2man", "mcman", "mcserv", "padman", "libsd", "audsrv",
+    /* not on an older card: files then go through FILEIO, and there are no sockets */
+    "mxio", "mxsock",
+};
+#define OPTIONAL(i) ((i) >= M_MXIO || ((i) >= M_MXDEV9 && (i) <= M_MXNET))
+/* maxsdk's network drivers did not load: ps2sdk's from now on */
+static int net_ps2sdk;
 #define NMODULES (sizeof module_names / sizeof module_names[0])
 static struct {
   const u8 *start;
@@ -333,7 +342,7 @@ static int read_modules(void) {
   u8 *to = MODULE_MEM;
   for (u32 i = 0; i < NMODULES; i++) {
     int fd = module_open(i), size = fd < 0 ? -1 : mx_fio_lseek(fd, 0, MX_FIO_SEEK_END);
-    if (i >= M_MXIO && fd < 0) {
+    if (OPTIONAL(i) && fd < 0) {
       modules[i].size = 0;
       continue;
     }
@@ -488,9 +497,21 @@ reset:
       (chime & 3) != 1)
     con_log(CON_RED, "the chime did not run: a program's sound may go on");
   status_state(ST_BOOT, "IOP modules");
-  for (u32 i = M_CHIME + 1; i < NMODULES; i++)
-    if (modules[i].size && load(i, i == M_PS2IP ? if_conf : 0, i == M_PS2IP ? if_conf_len : 0) < 0)
-      return -1;
+  int mx_net = !net_ps2sdk && modules[M_MXDEV9].size && modules[M_MXETH].size && modules[M_MXNET].size;
+  for (u32 i = M_CHIME + 1; i < NMODULES; i++) {
+    int stack = i == M_MXNET || i == M_PS2IP;
+    if (!modules[i].size || (i >= M_MXDEV9 && i <= M_MXNET && !mx_net) ||
+        (i >= M_DEV9 && i <= M_PS2IP && mx_net))
+      continue;
+    if (load(i, stack ? if_conf : 0, stack ? if_conf_len : 0) < 0) {
+      if (i > M_MXNET || !mx_net)
+        return -1;
+      /* what loaded of them is on the IOP: a reset, then ps2sdk's */
+      con_log(CON_RED, "maxsdk's network drivers did not load: ps2sdk's");
+      net_ps2sdk = 1;
+      goto reset;
+    }
+  }
   iop_last = mx_iop_last_module();
   return 0;
 }
