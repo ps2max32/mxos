@@ -249,4 +249,7 @@ void con_init(void) {
   if (path3_free())
     box(0, Y0 + LOG0 * CH - 6, W, 2, 0x404040);
   mx_irq_restore(was);
+  /* the log so far (a program's end without the restart keeps it) */
+  for (u32 i = 0; i < log_n; i++)
+    con_text(0, LOG0 + i, log_rgb[i], log_text[i]);
 }

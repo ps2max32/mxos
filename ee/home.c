@@ -218,6 +218,7 @@ static int draw(u32 page) {
 
 /* maxsdk's irq.c: one more function at each vblank start */
 int mx__irq_vbon_hook(void (*fn)(void));
+void mx__irq_vbon_unhook(void (*fn)(void));
 static int vbl_sema = -1;
 static void vblank(void) {
   if (menu_up && vbl_sema >= 0)
@@ -315,3 +316,7 @@ int home_run(u32 page, u32 pages) {
   hold_back = 1;
   return (int)quit;
 }
+
+/* the end of the program (end.c): the vblank function off; this file's state
+   is set back as linked after it */
+void home_unhook(void) { mx__irq_vbon_unhook(vblank); }

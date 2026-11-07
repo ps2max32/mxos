@@ -275,8 +275,12 @@ static void iop_exception(const u32 *w) {
 static void cmd_thread(void *arg) {
   (void)arg;
   for (;;) {
-    while (!pkt_new && !launch_argc)
+    while (!pkt_new && !launch_argc && !end_pending())
       mx_bios_sleep_thread();
+    if (end_pending()) {
+      program_ended();
+      continue;
+    }
     if (launch_argc) {
       int argc = launch_argc;
       launch_argc = 0;
@@ -336,6 +340,9 @@ void cmd_launch(int argc, const char *args, u32 args_len) {
   launch_argc = argc;
   mx_bios_wakeup_thread(cmd_tid);
 }
+
+int cmd_thread_id(void) { return cmd_tid; }
+void cmd_wake(void) { mx_bios_wakeup_thread(cmd_tid); }
 
 int cmd_init(void) {
   /* ps2link's command thread: above the programs (64) */

@@ -23,7 +23,22 @@ SECTIONS {
   __self_start = __mx_base;
   __self_end = __mx_top;
 
-  .data ORIGIN(ram) : { __data_start = .; *(.data .data.*) } >ram :data
+  /* The kernel's state of a program (ee/end.c): its .data here, its .bss
+     below; set back as linked when a program ends without the restart. */
+  .data ORIGIN(ram) : {
+    __data_start = .;
+    __prog_data_start = .;
+    *libmxkern.a:vm.c.o(.data .data.*)
+    *libmxkern.a:image.c.o(.data .data.*)
+    *libmxkern.a:heap.c.o(.data .data.*)
+    *libmxkern.a:mem.c.o(.data .data.*)
+    *libmxkern.a:exception.c.o(.data .data.*)
+    *libmxkern.a:thread.c.o(.data .data.*)
+    *libmxkern.a:pad.c.o(.data .data.*)
+    *home.o(.data .data.*)
+    __prog_data_end = .;
+    *(.data .data.*)
+  } >ram :data
 
   _gp = ALIGN(128) + 0x7ff0;
   .sdata : ALIGN(128) { *(.lit4) *(.lit8) *(.sdata .sdata.*) } >ram
@@ -40,7 +55,27 @@ SECTIONS {
   .bss (NOLOAD) : ALIGN(128) {
     __bss_start = .;
     /* MX_DMA_LINES (<mx/cpu.h>): each variable on lines of its own, the
-       last one too */
+       last one too; the program's first (ee/end.c) */
+    __prog_bss_start = .;
+    *libmxkern.a:vm.c.o(.bss.mx.lines)
+    *libmxkern.a:image.c.o(.bss.mx.lines)
+    *libmxkern.a:heap.c.o(.bss.mx.lines)
+    *libmxkern.a:mem.c.o(.bss.mx.lines)
+    *libmxkern.a:exception.c.o(.bss.mx.lines)
+    *libmxkern.a:thread.c.o(.bss.mx.lines)
+    *libmxkern.a:pad.c.o(.bss.mx.lines)
+    *home.o(.bss.mx.lines)
+    . = ALIGN(64);
+    *libmxkern.a:vm.c.o(.bss .bss.* COMMON)
+    *libmxkern.a:image.c.o(.bss .bss.* COMMON)
+    *libmxkern.a:heap.c.o(.bss .bss.* COMMON)
+    *libmxkern.a:mem.c.o(.bss .bss.* COMMON)
+    *libmxkern.a:exception.c.o(.bss .bss.* COMMON)
+    *libmxkern.a:thread.c.o(.bss .bss.* COMMON)
+    *libmxkern.a:pad.c.o(.bss .bss.* COMMON)
+    *home.o(.bss .bss.* COMMON)
+    . = ALIGN(64);
+    __prog_bss_end = .;
     *(.bss.mx.lines)
     . = ALIGN(64);
     *(.sbss .sbss.*) *(.scommon)

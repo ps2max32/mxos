@@ -54,6 +54,10 @@ struct thread_param {
 #define USER_PRIO 64
 
 static int user_tid; /* 0: no program */
+/* the running program is on libmxk (it called program()): it can end
+   without the restart (end.c) */
+static int on_libmxk;
+int exec_on_libmxk(void) { return on_libmxk; }
 static struct mx_loader_args largs;
 static u8 user_stack[16 * 1024] __attribute__((aligned(16)));
 
@@ -76,6 +80,12 @@ int exec_resident(void) {
   u32 start, end;
   exec_self(&start, &end);
   return end <= LOW;
+}
+
+/* The program ended without the restart (main.c): its thread is gone. */
+void exec_ended(void) {
+  user_tid = 0;
+  on_libmxk = 0;
 }
 
 void exec_kill(void) {
@@ -133,6 +143,7 @@ static void exception_setup(const char **note) {
 }
 
 static void kernel_program(void *heap_lo, void *heap_hi, void *vm_lo, void *vm_hi) {
+  on_libmxk = 1;
   mx__heap_range(heap_lo, heap_hi);
   mx__vm_image_range(vm_lo, vm_hi);
 }
@@ -177,6 +188,7 @@ static const struct mxk_services kernel = {
     .gs_mode = home_gs_mode,
     .home_wanted = home_wanted,
     .home_run = home_run,
+    .irq_tables = end_irq_tables,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {
@@ -279,6 +291,9 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     return fail(-1, path, "ExecPS2 returned");
   }
 
+  /* what is there before it: the rest is the program's at its end (end.c) */
+  end_snapshot();
+  on_libmxk = 0;
   struct thread_param tp = {0};
   tp.func = (void *)(uintptr_t)eh.entry;
   tp.stack = user_stack;

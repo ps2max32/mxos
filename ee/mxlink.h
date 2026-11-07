@@ -48,6 +48,12 @@ int status_get(void);
 /* ---- commands from the host (cmd.c) ------------------------------------ */
 
 int cmd_init(void);
+/* the command thread: its id, and woken (a program ended: program_ended) */
+int cmd_thread_id(void);
+void cmd_wake(void);
+/* main.c: a program has ended without the restart; the command thread ends it */
+int end_pending(void);
+void program_ended(void);
 
 /* ---- the pad (pad.c) ------------------------------------------------- */
 
@@ -70,6 +76,26 @@ u32 home_wanted(void);
 int home_run(u32 page, u32 pages);
 /* the buttons a program gets: the combination taken for the menu */
 u32 home_filter(u32 buttons);
+/* the end of the program: its vblank function off */
+void home_unhook(void);
+
+/* ---- a program's end without the restart (end.c) ------------------------ */
+
+struct mxk_irq_tables;
+/* the threads and semaphores there are, just before a program starts */
+void end_snapshot(void);
+/* <mx/kernel.h>'s irq_tables: where the program's interrupt slots are */
+void end_irq_tables(const struct mxk_irq_tables *t);
+/* can a program end so (resident.ld has the program's area)? */
+int end_possible(void);
+/* its threads, semaphores, handlers, the units; then, after main.c's
+   cleanup of the IOP, the kernel's state of it set back */
+void end_cleanup(void);
+void end_reset_state(void);
+void end_counts(u32 *threads_left, u32 *semas_left);
+/* what end_cleanup ended: the program's threads and semaphores */
+void end_ended(u32 *threads, u32 *semas);
+
 /* the running program's path (main.c) */
 const char *status_program(void);
 
@@ -91,6 +117,10 @@ void exec_shell_next(void);
 int exec_resident(void);
 /* The memory mxlink takes. */
 void exec_self(u32 *start, u32 *end);
+/* Is the running program on libmxk (it may end without the restart)? */
+int exec_on_libmxk(void);
+/* it ended so: no program now */
+void exec_ended(void);
 /* Stop the running program (its thread). */
 void exec_kill(void);
 void tlb_restore(void);

@@ -24,6 +24,14 @@ What it adds to ps2link:
   return function (since maxsdk 8f9a72f; crash reports too); the BIOS's Exit
   is replaced for the others, ps2sdk's and older maxsdk ones (`ee/hook.S`).
   The screen shows the last program and its exit status.
+- A maxsdk program on `libmxk` (linked into VM, or `MX_KERNEL=1`) ends without
+  the restart (ExecPS2) the others get: the command thread terminates and
+  deletes its threads and semaphores, removes its interrupt handlers, resets
+  the DMA channels, VIF, GIF, IPU, VU0/VU1 and the timers, and sets mxlink's
+  state of the program back (`ee/end.c`). The screen keeps its log.
+- Held together, Select + Start + L1 + R1 open the home menu over a `libmxk`
+  program on maxsdk's frame pipeline (`ee/home.c`): resume, pads 1 and 2
+  swapped, Cross and Circle swapped, quit.
 - A short boot sound (`iop/chime.c`), after every IOP reset: at boot, and
   when a program that loaded IOP modules returns. It resets the SPU2 first
   (the IOP's reset alone leaves the SPU2 playing). A return with the IOP kept

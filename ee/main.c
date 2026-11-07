@@ -51,6 +51,8 @@ static s32 launch_cleanup KEPT = 0; /* the program before it ended */
 /* the next return goes to the text screen, not to the shell: after a host's
    program, and after the shell ended itself (it may crash at each start) */
 static s32 no_shell KEPT = 0;
+/* a program has ended and waits for the command thread (program_ended) */
+static volatile int ending;
 
 /* The crash of the program that ended as return number crash_return: kept
    over the restart, for the screen and the shell (mx_crash_last). */
@@ -114,8 +116,8 @@ static struct {
   u32 pad; /* a multiple of 16 bytes */
 } iop_status MX_DMA_LINES;
 
+static struct mx_sif_client npm;
 static void iop_status_send(u32 st) {
-  static struct mx_sif_client npm;
   static u32 answer[4] MX_DMA_LINES;
   if (!mx_sif_bound(&npm) && mx_sif_bind_tries(&npm, NPM_SID, 3) < 0)
     return;
@@ -255,8 +257,19 @@ void mxlink_return(int status) {
   returned = 1;
   returns++;
   last_status = status;
+  /* a libmxk program from the resident mxlink: the command thread ends it,
+     without the restart (end.c); this thread waits for that */
+  if (exec_on_libmxk() && exec_resident() && end_possible() &&
+      mx_bios_get_thread_id() != cmd_thread_id()) {
+    ending = 1;
+    cmd_wake();
+    for (;;)
+      mx_bios_sleep_thread();
+  }
   restart();
 }
+
+int end_pending(void) { return ending; }
 
 /* In the report of exception.c, on the kernel's stack. */
 void mx__crash_kept(struct mx_crash *c) {
@@ -587,6 +600,8 @@ static void emu_main(void) {
 }
 #endif
 
+static void after_program(void);
+
 int main(int argc, char **argv) {
   tlb_restore();
 #ifdef MXLINK_EMU
@@ -617,6 +632,16 @@ int main(int argc, char **argv) {
     con_log(CON_RED, "the command thread did not start");
     stopped();
   }
+  after_program();
+  /* the main thread ends; the command thread serves */
+  mx_bios_exit_delete_thread();
+  return 0;
+}
+
+/* What follows a program's end, after the restart (main) or without it
+   (program_ended): the screen's log, the end marker, the next program or the
+   shell. */
+static void after_program(void) {
   if (chime)
     con_log(CON_GREY, "sound reset: %d voices were on, auto DMA %d; blip envelope %04x",
             chime >> 2 & 63, chime >> 8 & 3, chime >> 12 & 0xFFFF);
@@ -654,7 +679,29 @@ int main(int argc, char **argv) {
   } else {
     status_state(ST_READY, 0);
   }
-  /* the main thread ends; the command thread serves */
-  mx_bios_exit_delete_thread();
-  return 0;
+}
+
+/* The end of a libmxk program, in the command thread: what the restart's
+   ExecPS2 and main's start did, the IOP kept. A program that changed the IOP,
+   or an IOP that does not answer, gets the restart after all. */
+void program_ended(void) {
+  ending = 0;
+  end_cleanup();
+  tlb_restore();
+  if (!iop_kept() || iop_cleanup_checked() < 0)
+    restart();
+  for (int i = 0; i < 4; i++)
+    mx__sif_client_check(i == 0 ? &npm : i == 1 ? &pad_rpc : i == 2 ? &snd_rpc : &sock_rpc);
+  u32 threads_left, semas_left;
+  end_counts(&threads_left, &semas_left);
+  end_reset_state();
+  exec_ended();
+  con_init();
+  screen();
+  u32 threads, semas;
+  end_ended(&threads, &semas);
+  con_log(CON_GREY, "ended without a restart: %u threads, %u semaphores", threads, semas);
+  if (threads_left || semas_left)
+    con_log(CON_RED, "the end left %u threads, %u semaphores", threads_left, semas_left);
+  after_program();
 }
