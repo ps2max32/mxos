@@ -88,8 +88,8 @@ make all high      # build/tools/mxlink/MXLINK.ELF, mxlink-high.elf
 - `make SHOT=1`: on PCSX2 (no network there) the start stops at SMAP; this
   saves the screen to `host:mxlink.tga` there and prints the test end marker.
 - Needs maxsdk (its own copy of libmx, built for size, in
-  `build/tools/mxlink/maxsdk`), the IOP gcc and ps2sdk's IOP build files
-  (`PS2MAX_IOP_BIN`, `PS2MAX_IOP_SDK`) for `iop/`, and ps2sdk's prebuilt IOP
+  `build/tools/mxlink/maxsdk`), the feature LLVM (clang, ld.lld) and
+  ps2sdk's IOP headers and `iopfixup` (`PS2MAX_IOP_SDK`) for `iop/`, and ps2sdk's prebuilt IOP
   modules (`PS2MAX_IRX`). Python only to change the boot sound
   (`iop/chime_blip.py` writes `iop/chime_blip.h`, which is committed).
 
