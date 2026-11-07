@@ -74,14 +74,10 @@ make all high      # build/tools/mxlink/MXLINK.ELF, mxlink-high.elf
 - `MXOS/*.irx`: the IOP modules. mxlink reads them from `mc0:/MXOS` at each
   IOP start, with what the IOP has or else with the ROM's memory card drivers,
   so it needs them there: without them it has no network. The network runs on
-  maxsdk's drivers (`mxdev9`, `mxeth`, `mxnet`) if all three are there; if one
-  is missing or does not load, mxlink resets the IOP and uses ps2sdk's
-  (`ps2dev9`, `netman`, `smap`, `ps2ip-nm`), which stay on the card for that.
-  The fast path for `host:` files is `mxfast` on maxsdk's drivers (without it
-  `host:` goes through ps2link's TCP connection), and part of `ps2ip-nm` on
-  ps2sdk's. `mxfast` is the console too, in place of `udptty`: to the
-  ps2client that serves the fast path without loss, else by broadcast as
-  `udptty`. Without `mxfast`, or on ps2sdk's drivers, `udptty` is the console.
+  maxsdk's drivers and stack (`mxdev9`, `mxeth`, `mxnet`), and only on them:
+  a PS2 with the PCMCIA DEV9 (SCPH-1xxxx) has none. `mxfast` is the fast path
+  for `host:` files and the console: to the ps2client that serves the fast
+  path without loss, else by broadcast as ps2sdk's `udptty` sent it.
 - `mxlink-high.elf`: the same at 0x1E00000, to try a build without
   installing it: from a running loader, `ps2client execee
   host:mxlink-high.elf` (its IOP reset ends the connection: expected), then

@@ -69,23 +69,19 @@ static u32 crash_return KEPT = 0;
 #define SHELL_PATH MODULE_DIR "MXSHELL.ELF"
 #define MODULE_MEM ((u8 *)0x01000000)
 enum {
-  M_CHIME, M_MXDEV9 = 2, M_MXETH, M_MXNET, M_MXFAST, M_DEV9, M_NETMAN, M_SMAP, M_PS2IP,
-  M_UDPTTY, M_MXIO = 19, M_MXSOCK = 20
+  M_CHIME, M_MXNET = 4, M_MXIO = 14, M_MXSOCK = 15
 };
 static const char *const module_names[] = {
     "chime", "poweroff",
-    /* the network: maxsdk's drivers (libs/maxsdk/docs/iop-drivers.md) if the
-       first three are on the card and load, else ps2sdk's. mxfast (the fast
-       path for host: files and the console) goes with maxsdk's, in place of
-       udptty; without it, or with ps2sdk's, udptty is the console. */
-    "mxdev9", "mxeth", "mxnet", "mxfast", "ps2dev9", "netman", "smap", "ps2ip-nm",
-    "udptty", "ioptrap", "ps2link", "sio2man", "mcman", "mcserv", "padman", "libsd", "audsrv",
+    /* the network: maxsdk's drivers and stack (libs/maxsdk/docs/iop-drivers.md),
+       and mxfast, the fast path for host: files and the console (the tty) */
+    "mxdev9", "mxeth", "mxnet", "mxfast",
+    "ioptrap", "ps2link", "sio2man", "mcman", "mcserv", "padman", "libsd", "audsrv",
     /* not on an older card: files then go through FILEIO, and there are no sockets */
     "mxio", "mxsock",
 };
-#define OPTIONAL(i) ((i) >= M_MXIO || ((i) >= M_MXDEV9 && (i) <= M_MXFAST))
-/* maxsdk's network drivers did not load: ps2sdk's from now on */
-static int net_ps2sdk;
+#define OPTIONAL(i) ((i) >= M_MXIO)
+_Static_assert(sizeof module_names / sizeof module_names[0] == M_MXSOCK + 1, "M_* and module_names");
 #define NMODULES (sizeof module_names / sizeof module_names[0])
 static struct {
   const u8 *start;
@@ -500,26 +496,12 @@ reset:
       (chime & 3) != 1)
     con_log(CON_RED, "the chime did not run: a program's sound may go on");
   status_state(ST_BOOT, "IOP modules");
-  int mx_net = !net_ps2sdk && modules[M_MXDEV9].size && modules[M_MXETH].size && modules[M_MXNET].size;
-  int mx_fast = 0;
   for (u32 i = M_CHIME + 1; i < NMODULES; i++) {
-    int stack = i == M_MXNET || i == M_PS2IP;
-    if (!modules[i].size || (i >= M_MXDEV9 && i <= M_MXFAST && !mx_net) ||
-        (i >= M_DEV9 && i <= M_PS2IP && mx_net) || (i == M_UDPTTY && mx_fast))
+    if (!modules[i].size)
       continue;
-    int r = load(i, stack ? if_conf : 0, stack ? if_conf_len : 0);
-    if (i == M_MXFAST) {
-      mx_fast = r >= 0; /* else udptty is the console, host: goes by TCP */
-      continue;
-    }
-    if (r < 0) {
-      if (i > M_MXNET || !mx_net)
-        return -1;
-      /* what loaded of them is on the IOP: a reset, then ps2sdk's */
-      con_log(CON_RED, "maxsdk's network drivers did not load: ps2sdk's");
-      net_ps2sdk = 1;
-      goto reset;
-    }
+    int stack = i == M_MXNET;
+    if (load(i, stack ? if_conf : 0, stack ? if_conf_len : 0) < 0)
+      return -1;
   }
   iop_last = mx_iop_last_module();
   return 0;
@@ -629,7 +611,7 @@ int main(int argc, char **argv) {
     status_state(ST_BOOT, "failed");
     stopped();
   }
-  /* the tty is up (mxfast or udptty): the debug output to ps2client too */
+  /* the tty is up (mxfast): the debug output to ps2client too */
   mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
   if (cmd_init() < 0) {
     con_log(CON_RED, "the command thread did not start");
