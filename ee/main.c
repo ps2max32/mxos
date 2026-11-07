@@ -196,6 +196,13 @@ static void read_conf(void) {
   parse_conf(buf);
 }
 
+/* The start's output: the serial port only, as the IOP a program left may not
+   answer, and the screen comes first (maxsdk's debug.c) */
+const int mx__debug_start_sinks = MX_SINK_SIO;
+/* maxsdk's start.c: the kernel's own fatal end (the VM's, in a program's
+   thread) prints no end marker, mxlink does when the program is back */
+const int mx__kernel_self = 1;
+
 static void restart(void) __attribute__((noreturn));
 static void restart(void) {
   extern char mxlink_start[], _gp[];
@@ -406,12 +413,21 @@ static void close_sockets(void) {
   if (mx_sif_bind_tries(&sock_rpc, MXSOCK_SID, 2) == 0 && sock_rpc.server)
     mx_sif_call(&sock_rpc, MXSOCK_CLOSE_ALL, MX_UNCACHED(sock_io), 32, MX_UNCACHED(sock_io + 8), 16);
 }
+/* A server of the IOP that does not answer while this cleans up: the calls
+   give up after a second (mx__sif_wait_limit), and the IOP is reset */
+static u32 timeouts_before;
+static int iop_silent(void) { return mx__sif_timeouts != timeouts_before; }
+
 static void iop_cleanup(void) {
   /* descriptors 0-2 are the tty's */
-  for (int fd = 3; fd < 32; fd++)
+  for (int fd = 3; fd < 32 && !iop_silent(); fd++)
     mx_fio_close(fd);
+  if (iop_silent())
+    return;
   mx__mxio_cleanup();
   close_sockets();
+  if (iop_silent())
+    return;
   /* an open port goes on writing the pad's state to EE memory */
   if (mx_sif_bind_tries(&pad_rpc, PAD_SID, 2) == 0 && pad_rpc.server) {
     for (int port = 0; port < 2; port++) {
@@ -424,7 +440,20 @@ static void iop_cleanup(void) {
                   sizeof rpc_res);
     }
   }
-  sound_off();
+  if (!iop_silent())
+    sound_off();
+}
+
+/* iop_cleanup with the limit: 0, or -1 when the IOP did not answer */
+static int iop_cleanup_checked(void) {
+  timeouts_before = mx__sif_timeouts;
+  mx__sif_wait_limit = MX_EE_HZ;
+  iop_cleanup();
+  mx__sif_wait_limit = 0;
+  if (!iop_silent())
+    return 0;
+  con_log(CON_RED, "the IOP did not answer: reset");
+  return -1;
 }
 
 static int boot_iop(void) {
@@ -432,16 +461,17 @@ static int boot_iop(void) {
   if (launch_argc || launch_cleanup) {
     if (mx_sif_init() < 0)
       return -1;
-    if (launch_cleanup)
-      iop_cleanup();
+    if (launch_cleanup && iop_cleanup_checked() < 0) {
+      launch_cleanup = 0;
+      goto reset;
+    }
     launch_cleanup = 0;
     iop_last = mx_iop_last_module();
     return 0;
   }
-  if (iop_kept()) {
-    iop_cleanup();
+  if (iop_kept() && iop_cleanup_checked() == 0)
     return 0;
-  }
+reset:
   if (returned)
     con_log(CON_GREY, "the program changed the IOP: reset");
   if (read_modules() < 0)
