@@ -74,14 +74,14 @@ $(OUT)/MXOS/%.irx: $(PS2MAX_IRX)/%.irx
 MAXSDK_IRX = $(PS2MAX)/build/libs/maxsdk/iop
 $(OUT)/MXOS/mxdev9.irx $(OUT)/MXOS/mxeth.irx $(OUT)/MXOS/mxnet.irx \
 $(OUT)/MXOS/ps2ip-nm.irx $(OUT)/MXOS/mxio.irx $(OUT)/MXOS/mxsock.irx $(OUT)/MXOS/mxfast.irx: FORCE
-	$(MAKE) -C $(PS2MAX)/libs/maxsdk/iop
+	$(MAKE) -C $(PS2MAX)/libs/maxsdk/iop EXTRA_CFLAGS=
 	@mkdir -p $(dir $@)
 	cp $(MAXSDK_IRX)/$(notdir $@) $@
 FORCE:
 
 # maxsdk's USB mass storage driver in place of ps2sdk's
 $(OUT)/MXOS/usbmass_bd.irx: FORCE
-	$(MAKE) -C $(PS2MAX)/libs/maxsdk/iop
+	$(MAKE) -C $(PS2MAX)/libs/maxsdk/iop EXTRA_CFLAGS=
 	@mkdir -p $(dir $@)
 	cp $(MAXSDK_IRX)/usbmass_bd.irx $@
 
