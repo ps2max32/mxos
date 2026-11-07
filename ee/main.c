@@ -515,6 +515,7 @@ static void emu_main(void) {
   con_init();
   if (returned) {
     mx_printf("mxlink: %s returned, exit status %d\n", last_path, (int)last_status);
+    mx_printf("@@PS2TEST_END@@ status=%d\n", (int)last_status);
     stopped();
   }
   restarts = 1;
@@ -582,6 +583,10 @@ int main(int argc, char **argv) {
             (int)last_status);
   if (returned && crash_return == returns && crash.note)
     con_log(CON_RED, "%s", crash.note);
+  /* A run ends here, however the program ended: not every way out prints the
+     marker. Before mxlink says it is ready, so that it cannot end the next run. */
+  if (returned && !launch_argc)
+    mx_printf("@@PS2TEST_END@@ status=%d\n", (int)last_status);
   int came_back = (int)returned;
   returned = 0;
   con_log(CON_GREEN, "mxlink %s ready", MXLINK_VERSION);
