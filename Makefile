@@ -81,6 +81,12 @@ $(OUT)/MXOS/ps2ip-nm.irx $(OUT)/MXOS/mxio.irx $(OUT)/MXOS/mxsock.irx: FORCE
 	cp $(MAXSDK_IRX)/$(notdir $@) $@
 FORCE:
 
+# maxsdk's USB mass storage driver in place of ps2sdk's
+$(OUT)/MXOS/usbmass_bd.irx: FORCE
+	$(MAKE) -C $(PS2MAX)/libs/maxsdk/iop
+	@mkdir -p $(dir $@)
+	cp $(MAXSDK_IRX)/usbmass_bd.irx $@
+
 $(OUT)/MXOS/ps2link.irx: $(PS2LINK_IRX)
 	@mkdir -p $(dir $@)
 	cp $< $@
@@ -192,4 +198,4 @@ $(OUT)/iop/%.irx: $(OUT)/iop/%.elf
 clean:
 	rm -rf $(OUT)
 
-.PHONY: all high emu modules mxos-fill shell clean
+.PHONY: all high emu modules mxos-fill shell clean FORCE
