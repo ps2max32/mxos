@@ -427,8 +427,10 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   u32 *core_off_at = 0, heap = 0;
   core_moved = 0;
   core_vm = vm;
-  if (!loader && self_end <= LOW && (core_off_at = mxk_note(fd, ph, eh.phnum, &heap)) &&
-      !vm && !heap)
+  if (!loader && self_end <= LOW)
+    core_off_at = mxk_note(fd, ph, eh.phnum, &heap);
+  int note_v9 = core_off_at != 0;
+  if (core_off_at && !vm && !heap)
     core_off_at = 0; /* without VM: all memory, unless it asks for a core heap */
   if (core_off_at) {
     u32 end = LOW;
@@ -488,6 +490,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
        go; memory stays) and starts it with the arguments. mxlink-high
        starts MXLINK.ELF so, for a test before it is installed. */
     con_log(CON_YELLOW, "  a loader: started by ExecPS2, mxlink ends");
+    kirq_off();
     mx_debug_flush();
     tlb_writable();
     mx_bios_exec_ps2((void *)(uintptr_t)eh.entry, 0, largs.args.argc, largs.args.argv);
@@ -532,6 +535,10 @@ int exec_elf(int argc, const char *args, u32 args_len) {
      debug output to the serial port only (con_log) */
   mx_debug_flush();
   mx_debug_sinks(MX_SINK_SIO);
+  /* a program not built for this kernel may load another loader over it:
+     the BIOS's interrupt table then (step 2d-1) */
+  if (!note_v9)
+    kirq_off();
   user_tid = tid;
   if (mx_bios_start_thread(tid, &largs) < 0) {
     user_tid = 0;

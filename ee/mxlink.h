@@ -132,6 +132,10 @@ void exec_ended(void);
 /* Stop the running program (its thread). */
 void exec_kill(void);
 void tlb_restore(void);
+/* kirq.c: the kernel first at INTC and DMAC interrupts (step 2d-1) */
+void kirq_on(void);
+void kirq_off(void);
+void kirq_counts(u32 *intc, u32 *dmac);
 int tlb_core_map(u32 va_end, u32 off);
 /* The BIOS's entry for mxlink's code, for a loader that writes there. */
 void tlb_writable(void);

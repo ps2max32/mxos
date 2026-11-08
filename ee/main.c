@@ -639,6 +639,7 @@ int main(int argc, char **argv) {
     restart();
   }
 
+  kirq_on();
   con_init();
   screen();
   status_state(ST_BOOT, "IOP");
@@ -718,6 +719,7 @@ void program_ended(void) {
   ending = 0;
   end_cleanup();
   tlb_restore();
+  kirq_on();
   if (!iop_kept() || iop_cleanup_checked() < 0)
     restart();
   u32 threads_left, semas_left, calls_left;
@@ -729,6 +731,9 @@ void program_ended(void) {
   u32 threads, semas;
   end_ended(&threads, &semas);
   con_log(CON_GREY, "ended without a restart: %u threads, %u semaphores", threads, semas);
+  u32 n_intc, n_dmac;
+  kirq_counts(&n_intc, &n_dmac);
+  con_log(CON_GREY, "the kernel first at %u INTC and %u DMAC interrupts", n_intc, n_dmac);
   if (threads_left || semas_left || calls_left)
     con_log(CON_RED, "the end left %u threads, %u semaphores, %u IOP calls, %u RPC packets",
             threads_left, semas_left, calls_left & 0xFF, calls_left >> 8);

@@ -37,7 +37,7 @@ CFLAGS += $(if $(SHOT),-DMXLINK_SHOT)
 # modules or commands: it starts the program in host:mxload.txt
 CFLAGS += $(if $(EMU),-DMXLINK_EMU)
 
-SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c
+SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c kirq.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
 MODULES = poweroff mxdev9 mxeth mxnet mxfast ioptrap sio2man mcman mcserv padman libsd audsrv \
           mxio mxsock
@@ -49,7 +49,7 @@ LOW_LDFLAGS  = --defsym=__mx_base=0x88000 --defsym=__mx_text=0xC0000 --defsym=__
 HIGH_LDFLAGS = --defsym=__mx_base=0x1E00000 --defsym=__mx_text=0x1E40000 --defsym=__mx_top=0x1F00000 \
                --defsym=__mx_stack_size=0x4000
 
-OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/hook.o
+OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/hook.o $(OUT)/obj/kirq_s.o
 
 all: $(OUT)/MXLINK.ELF $(OUT)/iop/mxroot.irx modules
 modules: $(MODULES:%=$(OUT)/MXOS/%.irx) $(OUT)/MXOS/ps2link.irx $(OUT)/MXOS/chime.irx
@@ -62,6 +62,10 @@ $(OUT)/obj/%.o: ee/%.c ee/mxlink.h $(MX_HDRS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/obj/hook.o: ee/hook.S
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/obj/kirq_s.o: ee/kirq.S
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
