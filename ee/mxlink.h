@@ -72,6 +72,10 @@ int pad_read(int port, struct mx_pad_state *s, int sticks);
 int pad_merged(int port, struct mx_pad_state *s, int sticks);
 /* after the IOP's set-up: the USB pads (mxpad.irx), if it runs */
 void pad_usb_start(void);
+/* <mx/kernel.h>'s pad_rumble (version 11); and at a program's end, every
+   motor it left running off */
+int pad_rumble(int port, u32 small, u32 big);
+void pad_rumble_off(void);
 
 /* ---- the home menu (home.c): <mx/kernel.h>'s version 7 ------------------ */
 

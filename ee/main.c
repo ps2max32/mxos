@@ -502,8 +502,10 @@ static void iop_cleanup(void) {
     sound_off();
 }
 
-/* an open port goes on writing the pad's state to EE memory */
+/* an open port goes on writing the pad's state to EE memory; the USB and
+   Bluetooth pads' motors stop */
 void pads_close(void) {
+  pad_rumble_off();
   if (mx_sif_bind_tries(&pad_rpc, PAD_SID, 2) == 0 && pad_rpc.server) {
     for (int port = 0; port < 2; port++) {
       volatile s32 *c = MX_UNCACHED(rpc_cmd);

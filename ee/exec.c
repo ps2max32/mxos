@@ -364,6 +364,7 @@ static const struct mxk_services kernel = {
     .home_run = home_run,
     .irq_tables = end_irq_tables,
     .kthreads = &ksched_kthreads,
+    .pad_rumble = pad_rumble,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {

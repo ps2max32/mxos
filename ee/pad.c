@@ -62,35 +62,50 @@ static struct mxpad_record usb_newest(int slot) {
   return (int)(b.seq - a.seq) > 0 ? b : a;
 }
 
-/* The pad of a program's port, from both sources, without the settings: 1
-   with a pad there. */
-int pad_merged(int port, struct mx_pad_state *s, int sticks) {
+/* What a program's port is: a SIO2 port (*sio 1, *n the port) or a USB or
+   Bluetooth pad (*sio 0, *n its slot of mxpad.irx, *rec its state); 0 with
+   no pad there. The SIO2 pads first, then the others by the order they came. */
+static int port_source(int port, int *sio, int *n, struct mxpad_record *rec) {
   struct mx_pad_state t;
   int k = 0;
   for (int p = 0; p < 2; p++)
-    if (mx__pad_read(p, &t, 0) && k++ == port)
-      return mx__pad_read(p, s, sticks);
-  s->buttons = 0;
-  s->analog = 0;
-  for (int i = 0; i < 4; i++)
-    s->sticks[i] = 128;
+    if (mx__pad_read(p, &t, 0) && k++ == port) {
+      *sio = 1, *n = p;
+      return 1;
+    }
   if (!usb_on || (unsigned)port >= PAD_PORTS)
     return 0;
-  /* the USB pads by the order they came: the (port - k)-th */
   struct mxpad_record r[MXPAD_PADS];
-  int n = 0;
+  int slot[MXPAD_PADS], m = 0;
   for (int i = 0; i < MXPAD_PADS; i++) {
     struct mxpad_record x = usb_newest(i);
     if (!x.kind)
       continue;
-    int j = n++;
+    int j = m++;
     for (; j > 0 && r[j - 1].connected > x.connected; j--)
-      r[j] = r[j - 1];
-    r[j] = x;
+      r[j] = r[j - 1], slot[j] = slot[j - 1];
+    r[j] = x, slot[j] = i;
   }
-  if (port - k >= n)
+  if (port - k >= m)
     return 0;
-  const struct mxpad_record *x = &r[port - k];
+  *sio = 0, *n = slot[port - k], *rec = r[port - k];
+  return 1;
+}
+
+/* The pad of a program's port, from both sources, without the settings: 1
+   with a pad there. */
+int pad_merged(int port, struct mx_pad_state *s, int sticks) {
+  int sio, n;
+  struct mxpad_record rec;
+  if (port_source(port, &sio, &n, &rec) && sio)
+    return mx__pad_read(n, s, sticks);
+  s->buttons = 0;
+  s->analog = 0;
+  for (int i = 0; i < 4; i++)
+    s->sticks[i] = 128;
+  if (!usb_on || (unsigned)port >= PAD_PORTS || !port_source(port, &sio, &n, &rec))
+    return 0;
+  const struct mxpad_record *x = &rec;
   s->buttons = x->buttons & 0xFFFF;
   if (x->buttons & MXPAD_PS)
     s->buttons |= MX_PAD_HOME;
@@ -99,6 +114,42 @@ int pad_merged(int port, struct mx_pad_state *s, int sticks) {
     s->sticks[0] = x->rx, s->sticks[1] = x->ry, s->sticks[2] = x->lx, s->sticks[3] = x->ly;
   }
   return 1;
+}
+
+/* ---- rumble (<mx/kernel.h> version 11) ---- */
+
+/* what each slot's motors were told last (a call only on a change) */
+static u8 rumble_small[MXPAD_PADS], rumble_big[MXPAD_PADS];
+
+static int usb_output(int slot, u32 small, u32 big) {
+  volatile u32 *in = MX_UNCACHED(usb.in), *out = MX_UNCACHED(usb.out);
+  in[0] = (u32)slot, in[1] = (small & 0xff) | (big & 0xff) << 8, in[2] = 0, in[3] = 0;
+  if (mx_sif_call(&usb_rpc, MXPAD_OUTPUT, (void *)in, 16, (void *)out, 16) < 0)
+    return -1;
+  return (int)out[0];
+}
+
+int pad_rumble(int port, u32 small, u32 big) {
+  int sio, n;
+  struct mxpad_record rec;
+  if (pad_settings.swap_ports && (unsigned)port <= 1)
+    port ^= 1;
+  if (!port_source(port, &sio, &n, &rec) || sio)
+    return -1; /* a SIO2 pad's motors: not yet */
+  small = small ? 0xff : 0, big = big > 255 ? 255 : big;
+  if (rumble_small[n] == small && rumble_big[n] == big)
+    return 0;
+  rumble_small[n] = (u8)small, rumble_big[n] = (u8)big;
+  return usb_output(n, small, big);
+}
+
+/* the end of a program: every motor it left running stops */
+void pad_rumble_off(void) {
+  for (int i = 0; usb_on && i < MXPAD_PADS; i++)
+    if (rumble_small[i] || rumble_big[i]) {
+      rumble_small[i] = rumble_big[i] = 0;
+      usb_output(i, 0, 0);
+    }
 }
 
 static u32 swap_bits(u32 b, u32 x, u32 y) {
