@@ -1,7 +1,7 @@
 # .github/workflows/ps2.yml of ps2max32/mxlink, the PS2's loader.
 # Every push and PR: build MXLINK.ELF (to install) and mxlink-high.elf (to
 # try a build from a running loader) with ghcr.io/ps2max32/ps2max, the IOP
-# module (iop/) with the image's IOP gcc; both as an artifact. A tag v*:
+# module (iop/) with its clang and ld.lld; both as an artifact. A tag v*:
 # also a GitHub release with them.
 name: ps2
 
