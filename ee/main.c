@@ -73,8 +73,12 @@ static u32 crash_return KEPT = 0;
 
 /* The IOP modules are files of the memory card (make: $(OUT)/MXOS), in the
    order they load. They are read to the programs' memory above mxlink's,
-   free whenever the IOP is set up. */
+   free whenever the IOP is set up. Another directory (make MODULE_DIR=...)
+   tries new modules: the one-shot boot of an mxlink built so reads them
+   there, and a reset boots the default again. */
+#ifndef MODULE_DIR
 #define MODULE_DIR "mc0:/MXOS/"
+#endif
 #define SHELL_PATH MODULE_DIR "MXSHELL.ELF"
 #define MODULE_MEM ((u8 *)0x01000000)
 enum {

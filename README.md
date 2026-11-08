@@ -94,6 +94,9 @@ make all high      # build/tools/mxlink/MXLINK.ELF, mxlink-high.elf
   a PS2 with the PCMCIA DEV9 (SCPH-1xxxx) has none. `mxfast` is the fast path
   for `host:` files and the console: to the ps2client that serves the fast
   path without loss, else by broadcast as ps2sdk's `udptty` sent it.
+  To try new modules: `make OUT=<dir> MODULE_DIR=mc0:/MXOS/NEW/ all`, the
+  modules (and `MXSHELL.ELF`) copied to `mc0:/MXOS/NEW`, that `MXLINK.ELF` as
+  the one-shot boot (`MXLINK.NEW`): if it fails, a reset boots the default.
 - `mxlink-high.elf`: the same at 0x1E00000, to try a build without
   installing it: from a running loader, `ps2client execee
   host:mxlink-high.elf` (its IOP reset ends the connection: expected), then

@@ -38,6 +38,9 @@ CFLAGS += -I$(PS2MAX)/libs/maxsdk/common/include
 # EMU=1 (make emu): the kernel for PCSX2, without network, IOP
 # modules or commands: it starts the program in host:mxload.txt
 CFLAGS += $(if $(EMU),-DMXLINK_EMU)
+# make MODULE_DIR=mc0:/MXOS/NEW/: the IOP modules (and the shell) from there,
+# to try new ones with the one-shot boot
+CFLAGS += $(if $(MODULE_DIR),-DMODULE_DIR='"$(MODULE_DIR)"')
 
 SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c kirq.c ksched.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
@@ -150,43 +153,24 @@ $(OUT)/mxlink-high.elf: $(OBJS) $(KERNEL_LIB) $(MX_CRT0) ee/resident.ld
 
 # ---- the IOP modules (iop/: ps2link's, the chime, mxroot), with LLVM ----------------------
 
-# clang for the IOP target, which links with ld.lld --irx into the IRX, as
-# maxsdk's iop/Rules.mk
-IOP_CC     = $(LLVM)/clang --target=mipsel-none-irx
-IOP_CFLAGS = -std=gnu23 -fno-builtin -ffreestanding -Os -Wall -Werror -Wno-unused-but-set-global \
-             -I$(PS2MAX_IOP_SDK)/iop/include -I$(PS2MAX_IOP_SDK)/common/include -Iiop
-# the import tables through maxsdk's irx_clang.h (clang puts file-scope asm first)
-IOP_IMPORT_CFLAGS = -include $(PS2MAX)/libs/maxsdk/iop/irx_clang.h
+# maxsdk's IOP toolchain (libs/maxsdk/iop/iop.mk): clang for mipsel-none-irx,
+# which links with ld.lld --irx into the IRX, the import tables from the ILB
+# files of maxsdk's and ps2sdk's IOP libraries
+PS2MAX_LLVM_BIN ?= $(LLVM)
+include $(PS2MAX)/libs/maxsdk/iop/iop.mk
+IOP_FLAGS  = $(IOP_CFLAGS) -Os -Werror $(IOP_INCS) -Iiop
 IOP_SRCS   = net_fsys.c net_fio.c ps2link.c cmdHandler.c nprintf.c excepHandler.c
-IOP_OBJS   = $(IOP_SRCS:%.c=$(OUT)/iop/%.o) $(OUT)/iop/imports.o
+IOP_OBJS   = $(IOP_SRCS:%.c=$(OUT)/iop/%.o)
 
 $(OUT)/iop/%.o: iop/%.c $(wildcard iop/*.h)
 	@mkdir -p $(dir $@)
-	$(IOP_CC) $(IOP_CFLAGS) -c $< -o $@
-
-$(OUT)/iop/imports.o: iop/imports.lst iop/irx_imports.h $(PS2MAX)/libs/maxsdk/iop/irx_clang.h
-	@mkdir -p $(dir $@)
-	{ echo '#include "irx_imports.h"'; cat $<; } > $(@:.o=.c)
-	$(IOP_CC) $(IOP_CFLAGS) $(IOP_IMPORT_CFLAGS) -c $(@:.o=.c) -o $@
+	$(IOP_CC) $(IOP_FLAGS) -c $< -o $@
 
 $(OUT)/iop/ps2link.irx: $(IOP_OBJS)
-	$(IOP_CC) -s -o $@ $^
-
-$(OUT)/iop/chime_imports.o: iop/chime_imports.lst iop/irx_imports.h $(PS2MAX)/libs/maxsdk/iop/irx_clang.h
-	@mkdir -p $(dir $@)
-	{ echo '#include "irx_imports.h"'; cat $<; } > $(@:.o=.c)
-	$(IOP_CC) $(IOP_CFLAGS) $(IOP_IMPORT_CFLAGS) -c $(@:.o=.c) -o $@
-
-$(OUT)/iop/chime.irx: $(OUT)/iop/chime.o $(OUT)/iop/chime_imports.o
-	$(IOP_CC) -s -o $@ $^
-
-$(OUT)/iop/mxroot_imports.o: iop/mxroot_imports.lst iop/irx_imports.h $(PS2MAX)/libs/maxsdk/iop/irx_clang.h
-	@mkdir -p $(dir $@)
-	{ echo '#include "irx_imports.h"'; cat $<; } > $(@:.o=.c)
-	$(IOP_CC) $(IOP_CFLAGS) $(IOP_IMPORT_CFLAGS) -c $(@:.o=.c) -o $@
-
-$(OUT)/iop/mxroot.irx: $(OUT)/iop/mxroot.o $(OUT)/iop/mxroot_imports.o
-	$(IOP_CC) -s -o $@ $^
+$(OUT)/iop/chime.irx: $(OUT)/iop/chime.o
+$(OUT)/iop/mxroot.irx: $(OUT)/iop/mxroot.o
+$(OUT)/iop/%.irx: $(MAXSDK_ILBS) $(IOP_ILB_RSP)
+	$(IOP_CC) -s -o $@ $(filter %.o,$^) $(call iop_link_libs)
 
 clean:
 	rm -rf $(OUT)
