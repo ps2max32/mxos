@@ -37,7 +37,7 @@ CFLAGS += $(if $(SHOT),-DMXLINK_SHOT)
 # modules or commands: it starts the program in host:mxload.txt
 CFLAGS += $(if $(EMU),-DMXLINK_EMU)
 
-SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c
+SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
 MODULES = poweroff mxdev9 mxeth mxnet mxfast ioptrap sio2man mcman mcserv padman libsd audsrv \
           mxio mxsock

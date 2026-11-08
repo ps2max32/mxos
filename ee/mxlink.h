@@ -91,6 +91,12 @@ int end_possible(void);
 /* its threads, semaphores, handlers, the units; then, after main.c's
    cleanup of the IOP, the kernel's state of it set back */
 int end_tables_known(void);
+int end_park(int self);
+void end_unpark(void);
+void end_drop(void);
+u32 end_state_size(void);
+void end_state_save(void *to);
+void end_state_load(const void *from);
 void end_cleanup(void);
 void end_kernel_clients(void); /* main.c */
 void end_reset_state(void);
@@ -147,8 +153,19 @@ void exec_started(const char *path);
 void mxlink_takeover(int argc, const char *args, u32 args_len) __attribute__((noreturn));
 /* A host's program: it comes back to the text screen, not to the shell. */
 void mxlink_host_run(void);
-void mxlink_launch(int argc, const char *args, u32 args_len, const char *swap)
-    __attribute__((noreturn));
+/* mx_loader_launch: the caller ends, or waits and gets the other's exit
+   status (step 2c, exec_park) */
+int mxlink_launch(int argc, const char *args, u32 args_len, const char *swap);
+/* step 2c (exec.c) */
+int exec_parked(void);
+int exec_park(void);
+int exec_park_done(void);
+int exec_park_status(void);
+void exec_unpark(int status);
+void exec_park_drop(void);
+void exec_park_forget(void);
+/* the pad's ports closed (main.c) */
+void pads_close(void);
 /* The next program's swap file, for one exec_elf. */
 void exec_swap(const char *swap);
 /* programs returned to mxlink since it booted, the last one's exit status */

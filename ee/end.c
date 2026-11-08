@@ -44,7 +44,24 @@ static int sema_there(int id) {
 static struct mxk_irq_tables tables;
 static int tables_known;
 
+/* step 2c: what a program that waits for another (exec_park) had here */
+static struct {
+  u32 threads_before[NIDS / 32], semas_before[NIDS / 32];
+  struct mxk_irq_tables tables;
+  u32 intc_mask, dmac_mask; /* its slots that had a BIOS handler */
+  u8 threads[64];           /* its threads suspended */
+  u32 nthreads;
+  int drop; /* given up: the next snapshot is its, so its end takes it too */
+} parked;
+
 void end_snapshot(void) {
+  tables_known = 0;
+  if (parked.drop) {
+    parked.drop = 0;
+    for (int i = 0; i < NIDS / 32; i++)
+      threads_before[i] = parked.threads_before[i], semas_before[i] = parked.semas_before[i];
+    return;
+  }
   for (int i = 0; i < NIDS / 32; i++)
     threads_before[i] = semas_before[i] = 0;
   for (int id = 0; id < NIDS; id++) {
@@ -53,7 +70,6 @@ void end_snapshot(void) {
     if (sema_there(id))
       semas_before[id / 32] |= 1u << (id % 32);
   }
-  tables_known = 0;
 }
 
 /* in core memory of a program, and the whole range */
@@ -204,4 +220,86 @@ void end_counts(u32 *threads_left, u32 *semas_left, u32 *calls) {
     *threads_left += !tb && thread_there(id);
     *semas_left += !sb && sema_there(id);
   }
+}
+
+/* ---- step 2c: a program waits for one it started (exec_park) ---------------- */
+
+static void slot_set(const void *base, u32 i, int id) {
+  *(volatile int *)((const u8 *)base + i * tables.slot_size + tables.id_offset) = id;
+}
+
+/* In the waiting program's thread (self), under its ASID: its handlers taken
+   from the BIOS (they would run in the other's address space), its other
+   threads suspended, what the kernel knows of it kept. -1: not possible. */
+int end_park(int self) {
+  if (!tables_known || !tables.intc_entry || !tables.dmac_entry ||
+      !program_range(tables.intc_entry, 4) || !program_range(tables.dmac_entry, 4))
+    return -1;
+  for (int i = 0; i < NIDS / 32; i++)
+    parked.threads_before[i] = threads_before[i], parked.semas_before[i] = semas_before[i];
+  parked.tables = tables;
+  parked.intc_mask = parked.dmac_mask = 0;
+  for (u32 i = 0; i < tables.nintc; i++) {
+    int id = slot_id(tables.intc, i);
+    if (id > 0) {
+      mx_bios_remove_intc_handler((int)i, id);
+      parked.intc_mask |= 1u << i;
+    }
+  }
+  for (u32 i = 0; i < tables.ndmac; i++) {
+    int id = slot_id(tables.dmac, i);
+    if (id > 0) {
+      mx_bios_remove_dmac_handler((int)i, id);
+      parked.dmac_mask |= 1u << i;
+    }
+  }
+  parked.nthreads = 0;
+  for (int id = 1; id < NIDS && parked.nthreads < sizeof parked.threads; id++)
+    if (id != self && !(threads_before[id / 32] >> (id % 32) & 1) && thread_there(id)) {
+      mx_bios_suspend_thread(id);
+      parked.threads[parked.nthreads++] = (u8)id;
+    }
+  parked.drop = 0;
+  return 0;
+}
+
+/* In the command thread, under its ASID again, its kernel state back: its
+   handlers added again (their new ids in its slots), its causes and
+   channels on, its threads resumed. */
+void end_unpark(void) {
+  for (int i = 0; i < NIDS / 32; i++)
+    threads_before[i] = parked.threads_before[i], semas_before[i] = parked.semas_before[i];
+  tables = parked.tables;
+  tables_known = 1;
+  for (u32 i = 0; i < tables.nintc; i++)
+    if (parked.intc_mask >> i & 1) {
+      slot_set(tables.intc, i, mx_bios_add_intc_handler((int)i, (int (*)(int, void *, void *))(uintptr_t)tables.intc_entry, 0, 0));
+      mx_bios_enable_intc((int)i);
+    }
+  for (u32 i = 0; i < tables.ndmac; i++)
+    if (parked.dmac_mask >> i & 1) {
+      slot_set(tables.dmac, i, mx_bios_add_dmac_handler((int)i, (int (*)(int, void *, void *))(uintptr_t)tables.dmac_entry, 0, 0));
+      mx_bios_enable_dmac((int)i);
+    }
+  for (u32 i = 0; i < parked.nthreads; i++)
+    mx_bios_resume_thread(parked.threads[i]);
+}
+
+/* Given up (the other could not have a run of its own and takes all
+   memory): its threads and semaphores go with the other's end. */
+void end_drop(void) { parked.drop = 1; }
+
+/* The kernel's state of a program (resident.ld): its size, kept and put back */
+u32 end_state_size(void) {
+  return (u32)(__prog_data_end - __prog_data_start) + (u32)(__prog_bss_end - __prog_bss_start);
+}
+void end_state_save(void *to) {
+  u32 d = (u32)(__prog_data_end - __prog_data_start);
+  memcpy(to, __prog_data_start, d);
+  memcpy((u8 *)to + d, __prog_bss_start, (u32)(__prog_bss_end - __prog_bss_start));
+}
+void end_state_load(const void *from) {
+  u32 d = (u32)(__prog_data_end - __prog_data_start);
+  memcpy(__prog_data_start, from, d);
+  memcpy(__prog_bss_start, (const u8 *)from + d, (u32)(__prog_bss_end - __prog_bss_start));
 }

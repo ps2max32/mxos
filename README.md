@@ -39,7 +39,11 @@ What it adds to ps2link:
   program, and the chime's quiet mode stops the voices. The module does not
   stay on the IOP.
 - A shell: `mc0:/MXOS/MXSHELL.ELF`, if it is there, is started at boot and
-  after each program it started (`mx_loader_launch`). `ps2client status`
+  after each program it started (`mx_loader_launch`). A game built on
+  maxsdk for kernel version 9 runs beside it instead: the shell waits in
+  memory (its core at the top, under its own ASID) and goes on at once when
+  the game ends; an older game takes all memory and the shell starts again
+  after it. `ps2client status`
   then says `state=menu`. A host command that needs `host:` stops the shell
   (cleaned up as after a program, the IOP kept, about a second; ps2client
   asks again), and `execee` from a client that does not ask first starts its

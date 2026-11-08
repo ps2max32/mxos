@@ -284,8 +284,12 @@ static void cmd_thread(void *arg) {
     if (launch_argc) {
       int argc = launch_argc;
       launch_argc = 0;
-      if (exec_elf(argc, launch_args, launch_len) < 0)
-        status_state(ST_READY, 0);
+      if (exec_elf(argc, launch_args, launch_len) < 0) {
+        if (exec_parked())
+          exec_unpark(-1); /* the program that started it goes on */
+        else
+          status_state(ST_READY, 0);
+      }
       continue;
     }
     pkt_new = 0;

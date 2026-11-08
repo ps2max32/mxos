@@ -296,7 +296,10 @@ int mxlink_crash(struct mx_crash *c) {
   return 1;
 }
 
-void mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
+/* the path of a program that waits for one it started (step 2c) */
+static char parked_path[sizeof last_path];
+
+int mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
   u32 n = swap ? strlen(swap) : 0;
   if (n >= sizeof launch_swap)
     n = 0;
@@ -306,6 +309,17 @@ void mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
     args_len = sizeof launch_args;
   memcpy(launch_args, args, args_len);
   launch_len = args_len;
+  /* a program with its core at a run of its own and without VM waits for
+     the other, in its own thread (not the command thread's takeover) */
+  if (mx_bios_get_thread_id() != cmd_thread_id() && exec_park() == 0) {
+    memcpy(parked_path, last_path, sizeof parked_path);
+    pads_close();
+    exec_swap(launch_swap[0] ? launch_swap : 0);
+    cmd_launch(argc, launch_args, launch_len);
+    while (!exec_park_done())
+      mx_bios_sleep_thread();
+    return exec_park_status();
+  }
   launch_argc = argc;
   launch_cleanup = 1;
   restart();
@@ -314,7 +328,8 @@ void mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
 void mxlink_takeover(int argc, const char *args, u32 args_len) {
   exec_kill();
   no_shell = 1;
-  mxlink_launch(argc, args, args_len, 0);
+  mxlink_launch(argc, args, args_len, 0); /* from the command thread: the restart */
+  __builtin_unreachable();
 }
 
 void mxlink_host_run(void) { no_shell = 1; }
@@ -451,7 +466,13 @@ static void iop_cleanup(void) {
   close_sockets();
   if (iop_silent())
     return;
-  /* an open port goes on writing the pad's state to EE memory */
+  pads_close();
+  if (!iop_silent())
+    sound_off();
+}
+
+/* an open port goes on writing the pad's state to EE memory */
+void pads_close(void) {
   if (mx_sif_bind_tries(&pad_rpc, PAD_SID, 2) == 0 && pad_rpc.server) {
     for (int port = 0; port < 2; port++) {
       volatile s32 *c = MX_UNCACHED(rpc_cmd);
@@ -463,8 +484,6 @@ static void iop_cleanup(void) {
                   sizeof rpc_res);
     }
   }
-  if (!iop_silent())
-    sound_off();
 }
 
 /* iop_cleanup with the limit: 0, or -1 when the IOP did not answer */
@@ -713,5 +732,16 @@ void program_ended(void) {
   if (threads_left || semas_left || calls_left)
     con_log(CON_RED, "the end left %u threads, %u semaphores, %u IOP calls, %u RPC packets",
             threads_left, semas_left, calls_left & 0xFF, calls_left >> 8);
+  if (exec_parked()) {
+    /* the program that started it goes on (step 2c) */
+    con_log(last_status ? CON_RED : CON_GREEN, "%s returned, exit status %d: back to %s", last_path,
+            (int)last_status, parked_path);
+    memcpy(last_path, parked_path, sizeof last_path);
+    exec_unpark((int)last_status);
+    status_state(exec_in_shell() ? ST_MENU : ST_RUNNING, last_path);
+    mx_debug_flush();
+    mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY); /* a libmxk program's */
+    return;
+  }
   after_program();
 }
