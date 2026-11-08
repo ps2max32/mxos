@@ -64,6 +64,9 @@ struct pad_settings {
   u8 swap_xo;    /* Cross and Circle swapped */
 };
 extern struct pad_settings pad_settings;
+/* <mx/kernel.h>'s pad_init: the SIO2 ports open (mx__pad_init), a pad that
+   was there before keeps its port while it is found again */
+int pad_init(void);
 /* <mx/kernel.h>'s pad_read */
 int pad_read(int port, struct mx_pad_state *s, int sticks);
 /* the ports a program can read: the two SIO2 ones and mxpad.irx's slots */

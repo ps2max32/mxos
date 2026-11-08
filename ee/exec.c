@@ -356,7 +356,7 @@ static const struct mxk_services kernel = {
 #define MXK_ENTRY(ret, name, params, args) .name = name,
     MXK_CALLS(MXK_ENTRY)
     .fio_ending = mx__fio_ending,
-    .pad_init = mx__pad_init,
+    .pad_init = pad_init,
     .pad_read = pad_read,
     .gs_display = home_gs_display,
     .gs_mode = home_gs_mode,
