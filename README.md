@@ -49,8 +49,11 @@ What it adds to ps2link:
   that crashes at its start cannot loop.
 - `shell/`, that shell (`make shell`): a carousel of the games in
   `<device>/PS2MAX/<game>/` with a `game.ini` (`package-games.sh`), drawn by
-  beam racing in 24 bits. The devices: USB (`usb0:`), MX4SIO (`mx4sio0:`)
-  and the internal HDD (`ata0:`, FAT32 or exFAT, maxsdk's `mxata`). Storage
+  beam racing in 24 bits. The devices: USB (`usb0:`), MX4SIO (`mx4sio0:`),
+  the internal HDD (`ata0:`, FAT32 or exFAT, maxsdk's `mxata`) and HOST
+  (`host:`, the directory of a `ps2client listen` on the PC, which then holds
+  `PS2MAX/`; `listen` asks mxlink's status instead of pinging, which would stop
+  the shell). Storage
   drivers are loaded from `mc0:/MXOS` for the chosen device only (`SHELL.CFG`
   remembers it), so MX4SIO's polling costs nothing without one. All paths of a `game.ini` are relative to its
   directory: `title`, `year`, `type`, `elf`, `args`, `description` and
