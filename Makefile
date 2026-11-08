@@ -162,7 +162,7 @@ IOP_FLAGS  = $(IOP_CFLAGS) -Os -Werror $(IOP_INCS) -Iiop
 IOP_SRCS   = net_fsys.c net_fio.c ps2link.c cmdHandler.c nprintf.c excepHandler.c
 IOP_OBJS   = $(IOP_SRCS:%.c=$(OUT)/iop/%.o)
 
-$(OUT)/iop/%.o: iop/%.c $(wildcard iop/*.h)
+$(OUT)/iop/%.o: iop/%.c $(wildcard iop/*.h) $(PS2MAX)/libs/maxsdk/iop/iop.mk
 	@mkdir -p $(dir $@)
 	$(IOP_CC) $(IOP_FLAGS) -c $< -o $@
 
@@ -171,6 +171,8 @@ $(OUT)/iop/chime.irx: $(OUT)/iop/chime.o
 $(OUT)/iop/mxroot.irx: $(OUT)/iop/mxroot.o
 $(OUT)/iop/%.irx: $(MAXSDK_ILBS) $(IOP_ILB_RSP)
 	$(IOP_CC) -s -o $@ $(filter %.o,$^) $(call iop_link_libs)
+# made again when their objects are, not left out as in-between files
+.NOTINTERMEDIATE: $(OUT)/iop/ps2link.irx $(OUT)/iop/chime.irx $(OUT)/iop/mxroot.irx
 
 clean:
 	rm -rf $(OUT)
