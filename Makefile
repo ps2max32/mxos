@@ -69,20 +69,19 @@ $(OUT)/MXOS/%.irx: $(PS2MAX_IRX)/%.irx
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-# maxsdk's network drivers, stack and fast path, and its file and socket services
+# maxsdk's network drivers, stack and fast path, its file and socket
+# services, its USB mass storage driver in place of ps2sdk's and its HDD
+# driver: all built by one make of maxsdk's iop/ (one per module would run
+# in parallel with -j and build the same files at once), into maxsdk's own
+# build dir whatever OUT is
 MAXSDK_IRX = $(PS2MAX)/build/libs/maxsdk/iop
 $(OUT)/MXOS/mxdev9.irx $(OUT)/MXOS/mxeth.irx $(OUT)/MXOS/mxnet.irx $(OUT)/MXOS/mxfast.irx \
-$(OUT)/MXOS/mxio.irx $(OUT)/MXOS/mxsock.irx: FORCE
-	$(MAKE) -C $(PS2MAX)/libs/maxsdk/iop EXTRA_CFLAGS=
+$(OUT)/MXOS/mxio.irx $(OUT)/MXOS/mxsock.irx $(OUT)/MXOS/usbmass_bd.irx $(OUT)/MXOS/mxata.irx: maxsdk-iop
 	@mkdir -p $(dir $@)
 	cp $(MAXSDK_IRX)/$(notdir $@) $@
-FORCE:
-
-# maxsdk's USB mass storage driver in place of ps2sdk's, and its HDD driver
-$(OUT)/MXOS/usbmass_bd.irx $(OUT)/MXOS/mxata.irx: FORCE
-	$(MAKE) -C $(PS2MAX)/libs/maxsdk/iop EXTRA_CFLAGS=
-	@mkdir -p $(dir $@)
-	cp $(MAXSDK_IRX)/$(notdir $@) $@
+maxsdk-iop:
+	$(MAKE) -C $(PS2MAX)/libs/maxsdk/iop EXTRA_CFLAGS= OUT=$(MAXSDK_IRX)
+.PHONY: maxsdk-iop
 
 $(OUT)/MXOS/ps2link.irx: $(PS2LINK_IRX)
 	@mkdir -p $(dir $@)
@@ -186,4 +185,4 @@ $(OUT)/iop/%.irx: $(OUT)/iop/%.elf
 clean:
 	rm -rf $(OUT)
 
-.PHONY: all high emu modules mxos-fill shell clean FORCE
+.PHONY: all high emu modules mxos-fill shell clean
