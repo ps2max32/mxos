@@ -100,8 +100,9 @@ void tlb_restore(void) {
   u8 differs[TLB_N];
   int was = mx_di();
   /* the kernel's address space: ASID 0 (tlbr and tlbwi below set it back
-     to this) */
+     to this), virtual = physical */
   mx__asid_set(0);
+  mx__core_off = 0;
   for (u32 i = TLB_FIRST; i < TLB_N; i++) {
     u32 pm, hi, lo0, lo1;
     if (i == TLB_RESIDENT) {
@@ -121,4 +122,39 @@ void tlb_restore(void) {
       tlb_write(i, bios_tlb[i].pm, bios_tlb[i].hi, bios_tlb[i].lo0, bios_tlb[i].lo1);
   tlb_resident(exec_resident() ? bios_tlb[TLB_RESIDENT].lo1 & ~LO_D : bios_tlb[TLB_RESIDENT].lo1);
   mx_irq_restore(was);
+}
+
+/* A program's core [0x10_0000, va_end) at physical 0x10_0000 + off, under
+   the ASID now set (mx__asid; docs/mx-os-plan.md, step 2b): the BIOS's
+   global entries of cached main memory from 0x10_0000 (14-21) give way to
+   entries of that ASID, pages of 4 MiB, 1 MiB or 256 KiB as the alignment
+   allows (the main stack is in the core: maxsdk's VM linker scripts). va_end
+   and off: multiples of 1 MiB. -1, the TLB unchanged, if more than those 8
+   entries are needed. tlb_restore writes the BIOS's back. */
+#define TLB_CORE 14
+#define TLB_CORE_N 8
+#define LO_CORE 0x1Eu /* cached, D, V, not global */
+
+int tlb_core_map(u32 va_end, u32 off) {
+  u32 pm[TLB_CORE_N], hi[TLB_CORE_N], lo0[TLB_CORE_N], lo1[TLB_CORE_N], n = 0;
+  for (u32 v = 0x00100000u; v < va_end; n++) {
+    u32 s = 4u << 20;
+    while (s > (256u << 10) && (v % (2 * s) || (v + off) % s || v + 2 * s > va_end))
+      s >>= 2;
+    if (n == TLB_CORE_N || v % (2 * s) || (v + off) % s)
+      return -1;
+    pm[n] = ((s >> 12) - 1) << 13;
+    hi[n] = v | mx__asid;
+    lo0[n] = (v + off) >> 12 << 6 | LO_CORE;
+    lo1[n] = (v + s + off) >> 12 << 6 | LO_CORE;
+    v += 2 * s;
+  }
+  int was = mx_di();
+  /* all of them parked first: no two entries may match one address */
+  for (u32 i = 0; i < TLB_CORE_N; i++)
+    tlb_write(TLB_CORE + i, 0, 0xE0000000u + ((TLB_N + TLB_CORE + i) << 13), 0, 0);
+  for (u32 i = 0; i < n; i++)
+    tlb_write(TLB_CORE + i, pm[i], hi[i], lo0[i], lo1[i]);
+  mx_irq_restore(was);
+  return 0;
 }

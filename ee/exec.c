@@ -44,6 +44,7 @@ struct thread_param {
 };
 
 #define PT_LOAD 1
+#define PT_NOTE 4
 #define PF_X 1
 #define MAX_PHDRS 16
 #define LOW 0x00100000u
@@ -57,6 +58,8 @@ static int user_tid; /* 0: no program */
 /* the running program is on libmxk (it called program()): it can end
    without the restart (end.c) */
 static int on_libmxk;
+/* its core at a run of its own (step 2b, core_place) */
+static int core_moved;
 int exec_on_libmxk(void) { return on_libmxk; }
 static struct mx_loader_args largs;
 static u8 user_stack[16 * 1024] __attribute__((aligned(16)));
@@ -84,6 +87,7 @@ int exec_resident(void) {
 
 /* The program ended without the restart (main.c): its thread is gone. */
 void exec_ended(void) {
+  core_moved = 0;
   user_tid = 0;
   on_libmxk = 0;
 }
@@ -96,7 +100,64 @@ void exec_kill(void) {
   user_tid = 0;
 }
 
+/* Step 2b (docs/mx-os-plan.md): a libmxk program of version 9 with VM has its
+   core at a physical run of its own, under its ASID: [LOW, core_end) at LOW +
+   mx__core_off, the top of main memory; the VM's frames are the memory below
+   it, from LOW. CORE_HEAP: the core heap after the program (the VM's tables,
+   the physical allocator); MIN_FRAMES: less than that left, the program runs
+   at its own addresses. */
+/* the ASIDs given out, in turn (1-255; 0 is the kernel's and the programs'
+   not on libmxk). Stale entries of an earlier one are gone: the TLB is the
+   BIOS's again at each end (tlb_restore). */
+static u32 last_asid;
+#define CORE_HEAP (256u << 10)
+#define MIN_FRAMES (4u << 20)
+#define MIB (1u << 20)
+static u32 core_end, frames_hi;
+
+/* A libmxk program's note (maxsdk's src/base/kstubs.c): where its
+   mx__core_off is, if it was built for a kernel of version 9 or later. */
+static u32 *mxk_note(int fd, const struct phdr *ph, u32 n) {
+  for (u32 i = 0; i < n; i++) {
+    const struct phdr *p = &ph[i];
+    u32 w[6];
+    if (p->type != PT_NOTE || p->filesz < sizeof w || p->filesz > 64 ||
+        mx_fio_lseek(fd, (s32)p->offset, MX_FIO_SEEK_SET) != (int)p->offset ||
+        mx_fio_read(fd, w, sizeof w) != (int)sizeof w)
+      continue;
+    if (w[0] == 4 && w[1] == 8 && w[2] == MXK_NOTE_TYPE && !memcmp(&w[3], "MXK", 4) && w[4] >= 9 &&
+        w[5] >= LOW && w[5] < TOP && !(w[5] & 3))
+      return (u32 *)(uintptr_t)w[5];
+  }
+  return 0;
+}
+
+/* The core's run: the ASID set and the TLB written, before the load. 0, or
+   -1: the program at its own addresses. */
+static int core_place(u32 end) {
+  u32 va_end = (end + CORE_HEAP + MIB - 1) & ~(MIB - 1), run = va_end - LOW;
+  u32 top = mx_bios_get_memory_size() & ~(MIB - 1);
+  if (va_end > TOP || top < LOW + MIN_FRAMES + run)
+    return -1;
+  u32 phys = top - run;
+  last_asid = last_asid % 255 + 1;
+  mx__asid_set(last_asid);
+  mx__core_off = phys - LOW;
+  if (tlb_core_map(va_end, mx__core_off) < 0) {
+    tlb_restore();
+    return -1;
+  }
+  core_moved = 1;
+  core_end = va_end;
+  frames_hi = phys;
+  return 0;
+}
+
 static int fail(int fd, const char *path, const char *what) {
+  if (core_moved) {
+    core_moved = 0;
+    tlb_restore();
+  }
   if (fd >= 0)
     mx_fio_close(fd);
   con_log(CON_RED, "%s: %s", path, what);
@@ -142,16 +203,18 @@ static void exception_setup(const char **note) {
   mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
 }
 
-/* the ASIDs given out, in turn (1-255; 0 is the kernel's and the programs'
-   not on libmxk). Stale entries of an earlier one are gone: the TLB is the
-   BIOS's again at each end (tlb_restore). */
-static u32 last_asid;
-
 static void kernel_program(void *heap_lo, void *heap_hi, void *vm_lo, void *vm_hi) {
   on_libmxk = 1;
-  last_asid = last_asid % 255 + 1;
-  mx__asid_set(last_asid);
-  mx__heap_range(heap_lo, heap_hi);
+  if (core_moved) {
+    /* its ASID and core run since the load: the core heap ends with the
+       run, the frames are below it */
+    mx__heap_range(heap_lo, (void *)(uintptr_t)core_end);
+    mx__vm_frames(LOW, frames_hi);
+  } else {
+    last_asid = last_asid % 255 + 1;
+    mx__asid_set(last_asid);
+    mx__heap_range(heap_lo, heap_hi);
+  }
   mx__vm_image_range(vm_lo, vm_hi);
 }
 
@@ -260,6 +323,21 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   }
   if (loader && vm)
     return fail(fd, path, "a loader (below 1 MiB) with VM segments");
+  /* step 2b: a libmxk program of version 9 with VM, its core at a physical
+     run of its own (core_place), from here, so that the load goes there */
+  u32 *core_off_at = 0;
+  core_moved = 0;
+  if (vm && !loader && self_end <= LOW && (core_off_at = mxk_note(fd, ph, eh.phnum))) {
+    u32 end = LOW;
+    for (u32 i = 0; i < eh.phnum; i++) {
+      const struct phdr *p = &ph[i];
+      if (p->type == PT_LOAD && p->memsz && !(p->vaddr >= MX_VM_BASE && p->vaddr < MX_VM_LIMIT) &&
+          p->vaddr + p->memsz > end)
+        end = p->vaddr + p->memsz;
+    }
+    if ((u32)(uintptr_t)core_off_at + 4 > end || core_place(end) < 0)
+      core_off_at = 0;
+  }
   u32 bytes = 0, text_lo = ~0u, text_hi = 0;
   for (u32 i = 0; i < eh.phnum; i++) {
     const struct phdr *p = &ph[i];
@@ -277,6 +355,11 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     bytes += p->memsz;
   }
   mx_fio_close(fd);
+  if (core_off_at) {
+    *core_off_at = mx__core_off;
+    con_log(CON_GREY, "  its core at physical %08x-%08x, ASID %u", LOW + mx__core_off,
+            core_end + mx__core_off, mx__asid);
+  }
   if (vm)
     con_log(CON_GREY, "  %u KiB loaded, %d VM segment%s left to the program", bytes >> 10, vm,
             vm == 1 ? "" : "s");

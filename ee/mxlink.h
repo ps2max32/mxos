@@ -126,6 +126,7 @@ void exec_ended(void);
 /* Stop the running program (its thread). */
 void exec_kill(void);
 void tlb_restore(void);
+int tlb_core_map(u32 va_end, u32 off);
 /* The BIOS's entry for mxlink's code, for a loader that writes there. */
 void tlb_writable(void);
 
