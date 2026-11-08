@@ -78,11 +78,11 @@ $(OUT)/MXOS/mxio.irx $(OUT)/MXOS/mxsock.irx: FORCE
 	cp $(MAXSDK_IRX)/$(notdir $@) $@
 FORCE:
 
-# maxsdk's USB mass storage driver in place of ps2sdk's
-$(OUT)/MXOS/usbmass_bd.irx: FORCE
+# maxsdk's USB mass storage driver in place of ps2sdk's, and its HDD driver
+$(OUT)/MXOS/usbmass_bd.irx $(OUT)/MXOS/mxata.irx: FORCE
 	$(MAKE) -C $(PS2MAX)/libs/maxsdk/iop EXTRA_CFLAGS=
 	@mkdir -p $(dir $@)
-	cp $(MAXSDK_IRX)/usbmass_bd.irx $@
+	cp $(MAXSDK_IRX)/$(notdir $@) $@
 
 $(OUT)/MXOS/ps2link.irx: $(PS2LINK_IRX)
 	@mkdir -p $(dir $@)
@@ -95,7 +95,7 @@ $(OUT)/MXOS/chime.irx: $(CHIME_IRX)
 # the shell: mc0:/MXOS/MXSHELL.ELF, and the storage drivers it loads from there
 SHELL_SRCS = main.c draw.c cover.c games.c
 SHELL_OBJS = $(SHELL_SRCS:%.c=$(OUT)/shell/%.o) $(OUT)/shell/font.o
-STORAGE_MODULES = bdm bdmfs_fatfs usbd usbmass_bd mx4sio_bd
+STORAGE_MODULES = bdm bdmfs_fatfs usbd usbmass_bd mx4sio_bd mxata
 
 shell: $(OUT)/MXOS/MXSHELL.ELF $(STORAGE_MODULES:%=$(OUT)/MXOS/%.irx)
 

@@ -4,7 +4,7 @@
 #include <mx/sif.h>
 #include <mx/iop.h>
 #include <mx/timer.h>
-static const char*const N[]={"chime.irx","poweroff.irx","mxdev9.irx","mxeth.irx","mxnet.irx","mxfast.irx","ioptrap.irx","ps2link.irx","sio2man.irx","mcman.irx","mcserv.irx","padman.irx","libsd.irx","audsrv.irx","mxio.irx","mxsock.irx","bdm.irx","bdmfs_fatfs.irx","usbd.irx","usbmass_bd.irx","mx4sio_bd.irx","MXSHELL.ELF"};
+static const char*const N[]={"chime.irx","poweroff.irx","mxdev9.irx","mxeth.irx","mxnet.irx","mxfast.irx","ioptrap.irx","ps2link.irx","sio2man.irx","mcman.irx","mcserv.irx","padman.irx","libsd.irx","audsrv.irx","mxio.irx","mxsock.irx","bdm.irx","bdmfs_fatfs.irx","usbd.irx","usbmass_bd.irx","mx4sio_bd.irx","mxata.irx","MXSHELL.ELF"};
 static unsigned char a[262144] __attribute__((aligned(64))),b[262144] __attribute__((aligned(64)));
 static int end(int s){mx_printf("@@PS2TEST_END@@ status=%d\n",s);return s;}
 static void cat(char*d,const char*x,const char*y){unsigned n=0;while(*x)d[n++]=*x++;while(*y)d[n++]=*y++;d[n]=0;}
