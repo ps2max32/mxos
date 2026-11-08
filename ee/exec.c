@@ -180,7 +180,7 @@ static int core_place(u32 end, u32 heap) {
 /* ---- step 2c: a program waits for one it started ---------------------------
 
    mx_loader_launch from a program whose core is at a run of its own and
-   without VM (mxloader): it stays. Its other threads are suspended and its
+   without VM (mxshell): it stays. Its other threads are suspended and its
    interrupt handlers taken from the BIOS (end_park), the kernel's state of it
    kept in its own core heap; the other's run goes below its own. At the
    other's end it is mapped again, its kernel state put back, its handlers

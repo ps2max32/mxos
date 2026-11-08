@@ -1,11 +1,14 @@
-# mxlink: the EE side of the PS2 loader, on maxsdk (clang), with ps2link's
-# IOP modules.
+# mxos: the kernel of mx OS on the PS2, on maxsdk (clang). For now it is still
+# the loader with the host link in one (MXLINK.ELF, ee/cmd.c), with ps2link's
+# IOP module from apps/mxlink (MXLINK=<its directory>).
 #
-#   make            build/tools/mxlink/MXLINK.ELF (at 0x88000: to
+#   make            build/apps/mxos/MXLINK.ELF (at 0x88000: to
 #                   boot from the PS2's storage)
-#   make high       build/tools/mxlink/mxlink-high.elf (at 0x1E00000: to start
+#   make high       build/apps/mxos/mxlink-high.elf (at 0x1E00000: to start
 #                   with ps2client execee from a running ps2link, for tests)
-#   make emu        build/tools/mxlink-emu/mxlink.elf:
+#   make shell      mxshell (apps/mxshell, MXSHELL=<its directory>) and its
+#                   storage drivers into build/apps/mxos/MXOS, for the card
+#   make emu        build/apps/mxos-emu/mxlink.elf:
 #                   the kernel for PCSX2: libmxk programs need one, and it has
 #                   no network there; it starts what host:mxload.txt says
 
@@ -13,14 +16,16 @@
 all:
 
 PS2MAX  ?= $(abspath $(CURDIR)/../..)
-OUT     ?= $(PS2MAX)/build/tools/mxlink
+OUT     ?= $(PS2MAX)/build/apps/mxos
 # the IOP side from ps2dev (envsetup.sh): ps2sdk's IOP headers and its
 # prebuilt IOP modules (the IOP modules here are clang's and lld's)
 PS2MAX_PS2DEV  ?= $(abspath $(PS2MAX)/../ps2dev/install)
 PS2MAX_IOP_SDK ?= $(PS2MAX_PS2DEV)/ps2sdk
 PS2MAX_IRX     ?= $(PS2MAX_IOP_SDK)/iop/irx
-# ps2link's IOP module, built here from iop/
-PS2LINK_IRX = $(OUT)/iop/ps2link.irx
+# ps2link's IOP module, built by apps/mxlink; the shell, by apps/mxshell
+MXLINK      ?= $(PS2MAX)/apps/mxlink
+MXSHELL     ?= $(PS2MAX)/apps/mxshell
+PS2LINK_IRX = $(OUT)/mxlink/ps2link.irx
 CHIME_IRX   = $(OUT)/iop/chime.irx
 
 # its own libmx, built for size and with a section per function and
@@ -105,30 +110,16 @@ $(OUT)/MXOS/chime.irx: $(CHIME_IRX)
 	@mkdir -p $(dir $@)
 	cp $< $@
 
+$(PS2LINK_IRX): mxlink-iop
+mxlink-iop:
+	$(MAKE) -C $(MXLINK) OUT=$(OUT)/mxlink
+.PHONY: mxlink-iop
+
 # the shell: mc0:/MXOS/MXSHELL.ELF, and the storage drivers it loads from there
-SHELL_SRCS = main.c draw.c cover.c games.c
-SHELL_OBJS = $(SHELL_SRCS:%.c=$(OUT)/shell/%.o) $(OUT)/shell/font.o
-STORAGE_MODULES = bdm bdmfs_fatfs usbd usbmass_bd mx4sio_bd mxata
-
-shell: $(OUT)/MXOS/MXSHELL.ELF $(STORAGE_MODULES:%=$(OUT)/MXOS/%.irx)
-
-$(OUT)/shell/%.o: shell/%.c shell/shell.h shell/font.h $(MX_HDRS)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(OUT)/shell/font.o: shell/font.S shell/font.bin
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# libmxk in core: the kernel's services, without VM
-SHELL_LIB = $(MAXSDK_OUT)/libmxk.a
-$(SHELL_LIB): $(MX_LIB)
-$(OUT)/shell/shell.elf: $(SHELL_OBJS) $(SHELL_LIB) $(MX_CRT0) $(MX_LD)
-	$(call link,$@,$(MX_CRT0) $(SHELL_OBJS) $(SHELL_LIB))
-
-$(OUT)/MXOS/MXSHELL.ELF: $(OUT)/shell/shell.elf
-	@mkdir -p $(dir $@)
-	$(LLVM)/llvm-strip -o $@ $<
+shell:
+	$(MAKE) -C $(MXSHELL) OUT=$(OUT)/mxshell
+	@mkdir -p $(OUT)/MXOS
+	cp $(OUT)/mxshell/MXOS/* $(OUT)/MXOS/
 
 mxos-fill: $(OUT)/mxos-fill.elf
 $(OUT)/mxos-fill.elf: tools/mxos-fill.c $(MX_LIB) $(MX_CRT0)
@@ -151,7 +142,7 @@ $(OUT)/mxlink-high.elf: MX_LD = ee/resident.ld
 $(OUT)/mxlink-high.elf: $(OBJS) $(KERNEL_LIB) $(MX_CRT0) ee/resident.ld
 	$(call link,$@,$(HIGH_LDFLAGS) $(MX_CRT0) $(OBJS) $(KERNEL_LIB))
 
-# ---- the IOP modules (iop/: ps2link's, the chime, mxroot), with LLVM ----------------------
+# ---- the kernel's IOP modules (iop/: the chime, mxroot), with LLVM ----------------------
 
 # maxsdk's IOP toolchain (libs/maxsdk/iop/iop.mk): clang for mipsel-none-irx,
 # which links with ld.lld --irx into the IRX, the import tables from the ILB
@@ -159,20 +150,17 @@ $(OUT)/mxlink-high.elf: $(OBJS) $(KERNEL_LIB) $(MX_CRT0) ee/resident.ld
 PS2MAX_LLVM_BIN ?= $(LLVM)
 include $(PS2MAX)/libs/maxsdk/iop/iop.mk
 IOP_FLAGS  = $(IOP_CFLAGS) -Os -Werror $(IOP_INCS) -Iiop
-IOP_SRCS   = net_fsys.c net_fio.c ps2link.c cmdHandler.c nprintf.c excepHandler.c
-IOP_OBJS   = $(IOP_SRCS:%.c=$(OUT)/iop/%.o)
 
 $(OUT)/iop/%.o: iop/%.c $(wildcard iop/*.h) $(PS2MAX)/libs/maxsdk/iop/iop.mk
 	@mkdir -p $(dir $@)
 	$(IOP_CC) $(IOP_FLAGS) -c $< -o $@
 
-$(OUT)/iop/ps2link.irx: $(IOP_OBJS)
 $(OUT)/iop/chime.irx: $(OUT)/iop/chime.o
 $(OUT)/iop/mxroot.irx: $(OUT)/iop/mxroot.o
 $(OUT)/iop/%.irx: $(MAXSDK_ILBS) $(IOP_ILB_RSP)
 	$(IOP_CC) -s -o $@ $(filter %.o,$^) $(call iop_link_libs)
 # made again when their objects are, not left out as in-between files
-.NOTINTERMEDIATE: $(OUT)/iop/ps2link.irx $(OUT)/iop/chime.irx $(OUT)/iop/mxroot.irx
+.NOTINTERMEDIATE: $(OUT)/iop/chime.irx $(OUT)/iop/mxroot.irx
 
 clean:
 	rm -rf $(OUT)

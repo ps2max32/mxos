@@ -1,7 +1,8 @@
-# .github/workflows/ps2.yml of ps2max32/mxlink, the PS2's loader.
+# .github/workflows/ps2.yml of ps2max32/mxos, the kernel of mx OS (still the
+# loader with the host link in one).
 # Every push and PR: build MXLINK.ELF (to install) and mxlink-high.elf (to
 # try a build from a running loader) with ghcr.io/ps2max32/ps2max, the IOP
-# module (iop/) with its clang and ld.lld; both as an artifact. A tag v*:
+# modules (iop/, and ps2link.irx from ps2max32/mxlink) with its clang and ld.lld; both as an artifact. A tag v*:
 # also a GitHub release with them.
 name: ps2
 
@@ -19,8 +20,12 @@ jobs:
     container: ghcr.io/ps2max32/ps2max:latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: ps2max32/mxlink
+          path: mxlink
       - name: Build
-        run: make -j$(nproc) OUT=$PWD/out all high
+        run: make -j$(nproc) OUT=$PWD/out MXLINK=$PWD/mxlink all high
       - uses: actions/upload-artifact@v7
         with:
           name: mxlink-${{ github.sha }}

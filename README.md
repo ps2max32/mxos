@@ -1,8 +1,15 @@
-# mxlink
+# mxos
 
-A loader and monitor for the PS2: ps2link's EE side rewritten on maxsdk, with
-ps2link's IOP module (`iop/`) and protocol, so `ps2client` and scripts around
-it work with mxlink as with ps2link.
+The kernel of mx OS, the PS2's resident OS of ps2max: processes with address
+spaces of their own, virtual memory, the kernel's threads and interrupts, the
+pad, the display and the home menu, the boot. It grew out of mxlink, ps2link's
+EE side rewritten on maxsdk, and for now it is still the loader with the host
+link in one (`MXLINK.ELF`): ps2link's protocol (`ee/cmd.c`, with the IOP module
+of [mxlink](https://github.com/ps2max32/mxlink)), so `ps2client` and the scripts
+around it work as with ps2link. The shell is
+[mxshell](https://github.com/ps2max32/mxshell). Where it goes: maxsdk's
+`docs/mx-os-plan.md` and `docs/mx-os-apps-plan.md`; what it offers programs:
+maxsdk's `docs/mx-os.md` and `docs/kernel.md`.
 
 What it adds to ps2link:
 
@@ -51,20 +58,8 @@ What it adds to ps2link:
   with its exit status and crash report; `ps2client reset` goes back to the
   shell. A shell that ends itself also leaves the text screen up, so one
   that crashes at its start cannot loop.
-- `shell/`, that shell (`make shell`): a carousel of the games in
-  `<device>/PS2MAX/<game>/` with a `game.ini` (`package-games.sh`), drawn by
-  beam racing in 24 bits. The devices: USB (`usb0:`), MX4SIO (`mx4sio0:`),
-  the internal HDD (`ata0:`, FAT32 or exFAT, maxsdk's `mxata`) and HOST
-  (`host:`, the directory of a `ps2client listen` on the PC, which then holds
-  `PS2MAX/`; `listen` asks mxlink's status instead of pinging, which would stop
-  the shell). Storage
-  drivers are loaded from `mc0:/MXOS` for the chosen device only (`SHELL.CFG`
-  remembers it), so MX4SIO's polling costs nothing without one. All paths of a `game.ini` are relative to its
-  directory: `title`, `year`, `type`, `elf`, `args`, `description` and
-  `cover`, a file made by `tools/mk-cover.py` (the shell only copies it to GS
-  memory; without one it draws a pattern from the title). A directory with
-  just `<directory>.elf` is a game too. The font is Lato (SIL Open Font License), made into
-  `shell/font.bin` by `shell/gen-font.py`. Select leaves the shell.
+- The shell itself is mxshell (`make shell` builds it from `apps/mxshell` into
+  `MXOS/`).
 - The BIOS's TLB is written back at every start (`ee/tlb.c`): ExecPS2 leaves
   it as it is, so a killed program's VM entries would stay. mxlink's code,
   from 0xC0000, is read-only for programs: a wild store there is an exception.
@@ -82,14 +77,17 @@ command, the VU register dumps.
 ## Build
 
 ```
-make all high      # build/tools/mxlink/MXLINK.ELF, mxlink-high.elf
+make all high      # build/apps/mxos/MXLINK.ELF, mxlink-high.elf
+make shell         # mxshell into build/apps/mxos/MXOS
 ```
 
 - `MXLINK.ELF`: resident at 0x88000-0xFF800, below the programs;
   the one to install.
 - `MXOS/*.irx`: the IOP modules. mxlink reads them from `mc0:/MXOS` at each
   IOP start, with what the IOP has or else with the ROM's memory card drivers,
-  so it needs them there: without them it has no network. The network runs on
+  so it needs them there: without them it has no network. `ps2link.irx` comes
+  from `apps/mxlink` (`MXLINK=<directory>`), the shell from `apps/mxshell`
+  (`MXSHELL=<directory>`). The network runs on
   maxsdk's drivers and stack (`mxdev9`, `mxeth`, `mxnet`), and only on them:
   a PS2 with the PCMCIA DEV9 (SCPH-1xxxx) has none. `mxfast` is the fast path
   for `host:` files and the console: to the ps2client that serves the fast
@@ -105,8 +103,8 @@ make all high      # build/tools/mxlink/MXLINK.ELF, mxlink-high.elf
 - `make SHOT=1`: on PCSX2 (no network there) the start stops at SMAP; this
   saves the screen to `host:mxlink.tga` there and prints the test end marker.
 - Needs maxsdk (its own copy of libmx, built for size, in
-  `build/tools/mxlink/maxsdk`), the feature LLVM (clang, ld.lld) and
-  ps2sdk's IOP headers (`PS2MAX_IOP_SDK`) for `iop/`, and ps2sdk's prebuilt IOP
+  `build/apps/mxos/maxsdk`), the feature LLVM (clang, ld.lld) and
+  ps2sdk's IOP headers (`PS2MAX_IOP_SDK`) for `iop/` and mxlink's, and ps2sdk's prebuilt IOP
   modules (`PS2MAX_IRX`). Python only to change the boot sound
   (`iop/chime_blip.py` writes `iop/chime_blip.h`, which is committed).
 
