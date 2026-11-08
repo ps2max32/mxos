@@ -10,6 +10,8 @@
      a cause or channel the kernel has no handler of its own for is disabled;
    - the units: the DMA channels (not SIF's) stopped, VIF0/VIF1, GIF, IPU,
      VU0/VU1 reset, timers 0 and 1 stopped (the GS: the screen sets it up);
+   - the program's calls to the IOP that were under way waited for, and the
+     caches written back and emptied;
    - the kernel's state of the program (the VM, heaps, exceptions, threads,
      the pad, the home menu: their .data and .bss, apart in resident.ld) set
      back as linked.
@@ -160,16 +162,30 @@ extern char __prog_data_start[] __attribute__((weak)), __prog_data_end[] __attri
 extern char __prog_bss_start[] __attribute__((weak)), __prog_bss_end[] __attribute__((weak));
 extern char __data_start[], __data_copy[];
 
+int end_tables_known(void) { return tables_known; }
+
 int end_possible(void) { return __prog_data_end != 0 && __prog_bss_end != 0; }
 
+static int calls_left;
 void end_cleanup(void) {
   threads_off();
+  /* their calls to the IOP ended, before the next call or semas_off */
+  calls_left = mx__sif_calls_finish();
   handlers_off();
   mx__vm_unhook();
   home_unhook();
   semas_off();
+  /* the clients of a deleted semaphore told, before an id comes back */
+  end_kernel_clients();
   mx__sif_program_end();
   units_off();
+  /* The data cache still holds the program's dirty lines: written back
+     later (evicted, or the flush after the next load), they would land over
+     what the next program's load brought in by DMA (a game in VM, then the
+     shell: the shell ran its font as code). ExecPS2 did this. Both caches
+     now, before anything is loaded. */
+  mx_bios_flush_cache(0);
+  mx_bios_flush_cache(2);
 }
 
 void end_reset_state(void) {
@@ -180,7 +196,8 @@ void end_reset_state(void) {
 }
 
 /* the semaphores and threads now, against before the program: a check */
-void end_counts(u32 *threads_left, u32 *semas_left) {
+void end_counts(u32 *threads_left, u32 *semas_left, u32 *calls) {
+  *calls = (u32)calls_left;
   *threads_left = *semas_left = 0;
   for (int id = 0; id < NIDS; id++) {
     int tb = threads_before[id / 32] >> (id % 32) & 1, sb = semas_before[id / 32] >> (id % 32) & 1;

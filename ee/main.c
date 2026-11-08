@@ -258,8 +258,10 @@ void mxlink_return(int status) {
   returns++;
   last_status = status;
   /* a libmxk program from the resident mxlink: the command thread ends it,
-     without the restart (end.c); this thread waits for that */
-  if (exec_on_libmxk() && exec_resident() && end_possible() &&
+     without the restart (end.c); this thread waits for that. Only one that
+     showed the kernel its interrupt handlers (table version 8): an older
+     libmxk's would stay with the BIOS, in the next program's memory. */
+  if (exec_on_libmxk() && exec_resident() && end_possible() && end_tables_known() &&
       mx_bios_get_thread_id() != cmd_thread_id()) {
     ending = 1;
     cmd_wake();
@@ -684,16 +686,23 @@ static void after_program(void) {
 /* The end of a libmxk program, in the command thread: what the restart's
    ExecPS2 and main's start did, the IOP kept. A program that changed the IOP,
    or an IOP that does not answer, gets the restart after all. */
+/* The kernel's own clients whose semaphore went with the program's (made
+   while it ran: npm's, when its first status went out with the program's
+   start): made again at their next call. Right after semas_off, before a
+   new semaphore can take the same id. */
+void end_kernel_clients(void) {
+  for (int i = 0; i < 4; i++)
+    mx__sif_client_check(i == 0 ? &npm : i == 1 ? &pad_rpc : i == 2 ? &snd_rpc : &sock_rpc);
+}
+
 void program_ended(void) {
   ending = 0;
   end_cleanup();
   tlb_restore();
   if (!iop_kept() || iop_cleanup_checked() < 0)
     restart();
-  for (int i = 0; i < 4; i++)
-    mx__sif_client_check(i == 0 ? &npm : i == 1 ? &pad_rpc : i == 2 ? &snd_rpc : &sock_rpc);
-  u32 threads_left, semas_left;
-  end_counts(&threads_left, &semas_left);
+  u32 threads_left, semas_left, calls_left;
+  end_counts(&threads_left, &semas_left, &calls_left);
   end_reset_state();
   exec_ended();
   con_init();
@@ -701,7 +710,8 @@ void program_ended(void) {
   u32 threads, semas;
   end_ended(&threads, &semas);
   con_log(CON_GREY, "ended without a restart: %u threads, %u semaphores", threads, semas);
-  if (threads_left || semas_left)
-    con_log(CON_RED, "the end left %u threads, %u semaphores", threads_left, semas_left);
+  if (threads_left || semas_left || calls_left)
+    con_log(CON_RED, "the end left %u threads, %u semaphores, %u IOP calls, %u RPC packets",
+            threads_left, semas_left, calls_left & 0xFF, calls_left >> 8);
   after_program();
 }

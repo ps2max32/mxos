@@ -90,9 +90,11 @@ void end_irq_tables(const struct mxk_irq_tables *t);
 int end_possible(void);
 /* its threads, semaphores, handlers, the units; then, after main.c's
    cleanup of the IOP, the kernel's state of it set back */
+int end_tables_known(void);
 void end_cleanup(void);
+void end_kernel_clients(void); /* main.c */
 void end_reset_state(void);
-void end_counts(u32 *threads_left, u32 *semas_left);
+void end_counts(u32 *threads_left, u32 *semas_left, u32 *calls_left);
 /* what end_cleanup ended: the program's threads and semaphores */
 void end_ended(u32 *threads, u32 *semas);
 
