@@ -75,5 +75,11 @@ int ksched_active(void);
 void ksched_init(void);
 struct kctx *ksched_pick(void);
 u32 ksched_dispatch(int line, u32 epc);
+/* processes (step 2d-3): a new number (1-255, -1: none free), a thread's
+   process set, the process of a thread or a semaphore (-1: none there) */
+int ksched_proc_new(void);
+int ksched_set_proc(int id, int proc);
+int ksched_thread_proc(int id);
+int ksched_sema_proc(int id);
 #endif
 #endif

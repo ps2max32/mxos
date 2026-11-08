@@ -36,6 +36,7 @@ enum { T_FREE, T_DORMANT, T_READY, T_RUN, T_SLEEP, T_SEMA };
 struct kth {
   struct kctx c; /* first: ksched_cur points at it */
   u8 state, suspended, prio, init_prio;
+  u8 proc;       /* its process: 0 the kernel's, else a program's (step 2d-3) */
   s16 sema;      /* waited for */
   s16 result;    /* WaitSema's: its id, or -1 when it was deleted */
   u32 seq;       /* order among equals */
@@ -46,7 +47,7 @@ struct kth {
 
 struct ksema {
   s32 count, max, init, waiting, attr, option;
-  u8 used;
+  u8 used, proc;
 };
 
 static struct kth th[NTHREADS + 1]; /* ids 1..NTHREADS */
@@ -133,6 +134,7 @@ static int k_create_thread(void *param) {
       t->gp = (u32)(uintptr_t)p->gp, t->attr = p->attr, t->option = p->option;
       t->prio = t->init_prio = (u8)p->initial_priority;
       t->sema = -1;
+      t->proc = cur()->proc; /* the maker's */
       mx_irq_restore(was);
       return i;
     }
@@ -353,6 +355,7 @@ static int k_create_sema(void *param) {
       s->used = 1;
       s->count = p->init_count, s->max = p->max_count, s->init = p->init_count;
       s->waiting = 0, s->attr = (s32)p->attr, s->option = (s32)p->option;
+      s->proc = cur()->proc;
       mx_irq_restore(was);
       return i;
     }
@@ -452,6 +455,54 @@ static int k_refer_sema_status(int id, void *status) {
     o[4] = s->attr, o[5] = s->option;
   }
   return id;
+}
+
+/* ---- processes (step 2d-3) --------------------------------------------------
+
+   A process is a program's threads and semaphores: what a thread makes is
+   its process's, a program's first thread gets a new one (exec.c). The
+   kernel's own are process 0. A program's end takes its process's (end.c). */
+
+static int proc_used(int p) {
+  for (int i = 1; i <= NTHREADS; i++)
+    if (th[i].state != T_FREE && th[i].proc == p)
+      return 1;
+  for (int i = 0; i < NSEMAS; i++)
+    if (sema[i].used && sema[i].proc == p)
+      return 1;
+  return 0;
+}
+
+int ksched_proc_new(void) {
+  static int last;
+  int was = mx_di();
+  for (int n = 0; n < 255; n++) {
+    last = last % 255 + 1;
+    if (!proc_used(last)) {
+      mx_irq_restore(was);
+      return last;
+    }
+  }
+  mx_irq_restore(was);
+  return -1;
+}
+
+int ksched_set_proc(int id, int proc) {
+  struct kth *t = thread(id);
+  if (!t || proc < 0 || proc > 255)
+    return -1;
+  t->proc = (u8)proc;
+  return 0;
+}
+
+int ksched_thread_proc(int id) {
+  struct kth *t = thread(id);
+  return t ? t->proc : -1;
+}
+
+int ksched_sema_proc(int id) {
+  struct ksema *s = sema_of(id);
+  return s ? s->proc : -1;
 }
 
 /* ---- interrupt handlers: run by kirq() ------------------------------------- */

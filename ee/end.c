@@ -1,10 +1,11 @@
 /* A libmxk program ends without the restart (libs/maxsdk/docs/mx-os-plan.md,
    step 2a). What ExecPS2 did, done here, in the command thread:
 
-   - the BIOS's threads and semaphores that were not there when the program
-     started (end_snapshot, just before) are terminated and deleted: the
-     program's, and what the kernel made for it (the VM's pager and writer,
-     its clients' semaphores);
+   - the program's threads and semaphores are terminated and deleted: on the
+     kernel's threads those of its process (ksched.c, step 2d-3), on the
+     BIOS's those that were not there when it started (end_snapshot, just
+     before); the program's, and what the kernel made for it in its threads
+     (the VM's pager and writer, its clients' semaphores);
    - the program's interrupt handlers, from the slots its libmxk showed the
      kernel (irq_tables): their BIOS ids read, no code of the program run;
      a cause or channel the kernel has no handler of its own for is disabled;
@@ -24,6 +25,7 @@
 #include <mx/kernel.h>
 #include <mx/string.h>
 
+#include "ksched.h"
 #include "mxlink.h"
 
 #define NIDS 256
@@ -44,6 +46,25 @@ static int sema_there(int id) {
 static struct mxk_irq_tables tables;
 static int tables_known;
 
+/* on the kernel's threads: the program's process, and the one of a program
+   given up that ends with it (0: none; the snapshot then) */
+static int proc_now, proc_dropped;
+
+static int thread_mine(int id) {
+  if (proc_now > 0) {
+    int p = ksched_thread_proc(id);
+    return p > 0 && (p == proc_now || p == proc_dropped);
+  }
+  return !(threads_before[id / 32] >> (id % 32) & 1) && thread_there(id);
+}
+static int sema_mine(int id) {
+  if (proc_now > 0) {
+    int p = ksched_sema_proc(id);
+    return p > 0 && (p == proc_now || p == proc_dropped);
+  }
+  return !(semas_before[id / 32] >> (id % 32) & 1) && sema_there(id);
+}
+
 /* step 2c: what a program that waits for another (exec_park) had here */
 static struct {
   u32 threads_before[NIDS / 32], semas_before[NIDS / 32];
@@ -51,17 +72,22 @@ static struct {
   u32 intc_mask, dmac_mask; /* its slots that had a BIOS handler */
   u8 threads[64];           /* its threads suspended */
   u32 nthreads;
+  int proc, dropped;        /* proc_now and proc_dropped */
   int drop; /* given up: the next snapshot is its, so its end takes it too */
 } parked;
 
-void end_snapshot(void) {
+void end_snapshot(int proc) {
   tables_known = 0;
+  proc_now = proc, proc_dropped = 0;
   if (parked.drop) {
     parked.drop = 0;
+    proc_dropped = parked.proc;
     for (int i = 0; i < NIDS / 32; i++)
       threads_before[i] = parked.threads_before[i], semas_before[i] = parked.semas_before[i];
     return;
   }
+  if (proc > 0)
+    return; /* its process tells */
   for (int i = 0; i < NIDS / 32; i++)
     threads_before[i] = semas_before[i] = 0;
   for (int id = 0; id < NIDS; id++) {
@@ -126,7 +152,7 @@ static void threads_off(void) {
   int self = mx_bios_get_thread_id();
   ended_threads = 0;
   for (int id = 1; id < NIDS; id++) {
-    if (id == self || (threads_before[id / 32] >> (id % 32) & 1) || !thread_there(id))
+    if (id == self || !thread_mine(id))
       continue;
     mx_bios_terminate_thread(id);
     mx_bios_delete_thread(id);
@@ -137,7 +163,7 @@ static void threads_off(void) {
 static void semas_off(void) {
   ended_semas = 0;
   for (int id = 0; id < NIDS; id++)
-    if (!(semas_before[id / 32] >> (id % 32) & 1) && sema_there(id)) {
+    if (sema_mine(id)) {
       mx_bios_delete_sema(id);
       ended_semas++;
     }
@@ -216,9 +242,8 @@ void end_counts(u32 *threads_left, u32 *semas_left, u32 *calls) {
   *calls = (u32)calls_left;
   *threads_left = *semas_left = 0;
   for (int id = 0; id < NIDS; id++) {
-    int tb = threads_before[id / 32] >> (id % 32) & 1, sb = semas_before[id / 32] >> (id % 32) & 1;
-    *threads_left += !tb && thread_there(id);
-    *semas_left += !sb && sema_there(id);
+    *threads_left += id > 0 && thread_mine(id);
+    *semas_left += sema_mine(id);
   }
 }
 
@@ -238,6 +263,7 @@ int end_park(int self) {
   for (int i = 0; i < NIDS / 32; i++)
     parked.threads_before[i] = threads_before[i], parked.semas_before[i] = semas_before[i];
   parked.tables = tables;
+  parked.proc = proc_now, parked.dropped = proc_dropped;
   parked.intc_mask = parked.dmac_mask = 0;
   for (u32 i = 0; i < tables.nintc; i++) {
     int id = slot_id(tables.intc, i);
@@ -255,7 +281,7 @@ int end_park(int self) {
   }
   parked.nthreads = 0;
   for (int id = 1; id < NIDS && parked.nthreads < sizeof parked.threads; id++)
-    if (id != self && !(threads_before[id / 32] >> (id % 32) & 1) && thread_there(id)) {
+    if (id != self && thread_mine(id)) {
       mx_bios_suspend_thread(id);
       parked.threads[parked.nthreads++] = (u8)id;
     }
@@ -271,6 +297,7 @@ void end_unpark(void) {
     threads_before[i] = parked.threads_before[i], semas_before[i] = parked.semas_before[i];
   tables = parked.tables;
   tables_known = 1;
+  proc_now = parked.proc, proc_dropped = parked.dropped;
   for (u32 i = 0; i < tables.nintc; i++)
     if (parked.intc_mask >> i & 1) {
       slot_set(tables.intc, i, mx_bios_add_intc_handler((int)i, (int (*)(int, void *, void *))(uintptr_t)tables.intc_entry, 0, 0));

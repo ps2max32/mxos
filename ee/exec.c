@@ -515,7 +515,9 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   }
 
   /* what is there before it: the rest is the program's at its end (end.c) */
-  end_snapshot();
+  /* on the kernel's threads a process of its own (step 2d-3) */
+  int proc = ksched_active() ? ksched_proc_new() : 0;
+  end_snapshot(proc);
   on_libmxk = 0;
   struct thread_param tp = {0};
   tp.func = (void *)(uintptr_t)eh.entry;
@@ -525,6 +527,8 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   int tid = mx_bios_create_thread(&tp);
   if (tid < 0)
     return fail(-1, path, "cannot create its thread");
+  if (proc > 0)
+    ksched_set_proc(tid, proc);
   /* ps2link: the address of the thread id; programs with VM segments:
      MX_LOADER_MAGIC, so maxsdk's start-up reads them */
   largs.pid = vm ? MX_LOADER_MAGIC : (u32)(uintptr_t)&user_tid;

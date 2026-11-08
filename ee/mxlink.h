@@ -89,7 +89,7 @@ void home_unhook(void);
 
 struct mxk_irq_tables;
 /* the threads and semaphores there are, just before a program starts */
-void end_snapshot(void);
+void end_snapshot(int proc);
 /* <mx/kernel.h>'s irq_tables: where the program's interrupt slots are */
 void end_irq_tables(const struct mxk_irq_tables *t);
 /* can a program end so (resident.ld has the program's area)? */
