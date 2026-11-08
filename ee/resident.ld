@@ -105,6 +105,10 @@ SECTIONS {
     __init_array_end = .;
   } >ram
 
+  /* Written by the IOP's DMA (ee/pad.c: the USB pads' area), not loaded, not
+     cleared: in the upper half, written through the uncached alias only. */
+  .padarea (NOLOAD) : ALIGN(64) { *(.padarea) . = ALIGN(64); } >ram
+
   /* Scratchpad: 16 KiB at 0x7000_0000, not loaded, not cleared. */
   .spr (NOLOAD) : { *(.spr .spr.*) } >spr
 

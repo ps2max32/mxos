@@ -78,7 +78,7 @@ static u32 crash_return KEPT = 0;
 #define SHELL_PATH MODULE_DIR "MXSHELL.ELF"
 #define MODULE_MEM ((u8 *)0x01000000)
 enum {
-  M_CHIME, M_MXNET = 4, M_MXIO = 14, M_MXSOCK = 15
+  M_CHIME, M_MXNET = 4, M_MXIO = 14, M_MXSOCK = 15, M_USBD = 16, M_MXPAD = 17
 };
 static const char *const module_names[] = {
     "chime", "poweroff",
@@ -88,9 +88,11 @@ static const char *const module_names[] = {
     "ioptrap", "ps2link", "sio2man", "mcman", "mcserv", "padman", "libsd", "audsrv",
     /* not on an older card: files then go through FILEIO, and there are no sockets */
     "mxio", "mxsock",
+    /* not on an older card: no USB pads (mxpad, on usbd: libs/maxsdk/docs/pad-bt-plan.md) */
+    "usbd", "mxpad",
 };
 #define OPTIONAL(i) ((i) >= M_MXIO)
-_Static_assert(sizeof module_names / sizeof module_names[0] == M_MXSOCK + 1, "M_* and module_names");
+_Static_assert(sizeof module_names / sizeof module_names[0] == M_MXPAD + 1, "M_* and module_names");
 #define NMODULES (sizeof module_names / sizeof module_names[0])
 static struct {
   const u8 *start;
@@ -563,8 +565,11 @@ reset:
     if (!modules[i].size)
       continue;
     int stack = i == M_MXNET;
-    if (load(i, stack ? if_conf : 0, stack ? if_conf_len : 0) < 0)
+    if (load(i, stack ? if_conf : 0, stack ? if_conf_len : 0) < 0) {
+      if (i >= M_USBD)
+        continue; /* no USB pads, nothing more: the boot goes on */
       return -1;
+    }
   }
   iop_last = mx_iop_last_module();
   return 0;
@@ -683,6 +688,7 @@ int main(int argc, char **argv) {
     status_state(ST_BOOT, "failed");
     stopped();
   }
+  pad_usb_start();
   /* the tty is up (mxfast): the debug output to ps2client too */
   mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
   if (cmd_init() < 0) {

@@ -66,6 +66,12 @@ struct pad_settings {
 extern struct pad_settings pad_settings;
 /* <mx/kernel.h>'s pad_read */
 int pad_read(int port, struct mx_pad_state *s, int sticks);
+/* the ports a program can read: the two SIO2 ones and mxpad.irx's slots */
+#define PAD_PORTS 6
+/* the same without the settings: the SIO2 pads, then the USB pads */
+int pad_merged(int port, struct mx_pad_state *s, int sticks);
+/* after the IOP's set-up: the USB pads (mxpad.irx), if it runs */
+void pad_usb_start(void);
 
 /* ---- the home menu (home.c): <mx/kernel.h>'s version 7 ------------------ */
 

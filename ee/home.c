@@ -1,16 +1,17 @@
-/* The home menu (mx-kernel 7, libs/maxsdk/docs/mx-os-plan.md step 1): held
-   together, Select + Start + L1 + R1 open it over a libmxk program, which
-   waits meanwhile; resume, the pad's settings, quit.
+/* The home menu (mx-kernel 7, libs/maxsdk/docs/mx-os-plan.md step 1): the home
+   button (MX_PAD_HOME: the PS button of a USB pad, Select + Start + L1 + R1
+   held together on a SIO2 pad) opens it over a libmxk program, which waits
+   meanwhile; resume, the pad's settings, quit. Home, Start or Triangle close it.
 
    - The display registers are the kernel's: maxsdk writes them through
      gs_display, which writes and keeps them (also from the program's
      interrupt handlers); the menu takes circuit 1 and gives it back.
-   - The pad (pad.c) sees the combination and asks for the menu instead of
+   - The pad (pad.c) sees the home button and asks for the menu instead of
      handing it to the program. The program stops at its next frame boundary
      (maxsdk's ee/src/gs/home.c) with the GS idle and lends GS memory: then
      home_run runs here, in its thread. A program that does not come within
-     2 s (hires mode, no frame pipeline, an older maxsdk) gets the
-     combination, which ends it, as before.
+     2 s (hires mode, no frame pipeline, an older maxsdk) gets the home
+     button, which ends it, as before.
    - The menu is drawn by the CPU, 8 lines at a time, and copied into the lent
      memory by IMAGE transfers through the GIF FIFO: only BITBLTBUF, TRXPOS,
      TRXREG and TRXDIR change, which every upload sets anew; no drawing
@@ -61,7 +62,7 @@ void home_gs_mode(const struct mx_video_mode *m) {
   mode_known = 1;
 }
 
-/* ---- the combination ------------------------------------------------------ */
+/* ---- the home button ------------------------------------------------------ */
 
 #define PANEL_W 320
 #define PANEL_H 224
@@ -70,10 +71,11 @@ void home_gs_mode(const struct mx_video_mode *m) {
 #define PANEL_PAGES (PANEL_FBW * ((PANEL_H + 31) / 32))
 #define GIVE_UP (2 * MX_EE_HZ)
 
-static int wanted;      /* the combination seen, the menu asked for */
+static int wanted;      /* the home button seen, the menu asked for */
 static u32 wanted_at;   /* since */
-static int quit_now;    /* the program gets the combination: it ends */
+static int quit_now;    /* the program gets the home button: it ends */
 static int hold_back;   /* after the menu: no buttons until all are released */
+static int told_no_mode;
 
 u32 home_filter(u32 b) {
   if (hold_back) {
@@ -83,19 +85,24 @@ u32 home_filter(u32 b) {
   }
   if (menu_up)
     return 0; /* the menu's, not the program's */
-  if ((b & MX_PAD_QUIT) != MX_PAD_QUIT || quit_now)
+  if (!(b & MX_PAD_HOME) || quit_now)
     return b;
   /* only for a program whose maxsdk has the menu (it told the mode) */
-  if (!mode_known)
+  if (!mode_known) {
+    if (!told_no_mode)
+      mx_printf("mxlink: home button, but the program told no video mode: no menu\n");
+    told_no_mode = 1;
     return b;
+  }
   if (!wanted) {
     wanted = 1;
     wanted_at = mx_count();
   } else if (mx_count() - wanted_at > GIVE_UP) {
+    mx_printf("mxlink: home button, but no frame boundary within 2 s: no menu\n");
     quit_now = 1; /* it did not come to a frame boundary */
     return b;
   }
-  return b & ~MX_PAD_QUIT;
+  return b & ~MX_PAD_HOME;
 }
 
 u32 home_wanted(void) { return wanted && !menu_up && !quit_now ? PANEL_PAGES : 0; }
@@ -254,12 +261,12 @@ static void hide(void) {
   mx_irq_restore(was);
 }
 
-/* the pad as the menu reads it: both ports, as they are */
+/* the pad as the menu reads it: every pad, as it is (SIO2 or USB) */
 static u32 menu_buttons(void) {
   struct mx_pad_state s;
   u32 b = 0;
-  for (int p = 0; p < 2; p++)
-    if (mx__pad_read(p, &s, 0))
+  for (int p = 0; p < PAD_PORTS; p++)
+    if (pad_merged(p, &s, 0))
       b |= s.buttons;
   return b;
 }
@@ -267,13 +274,16 @@ static u32 menu_buttons(void) {
 int home_run(u32 page, u32 pages) {
   wanted = 0;
   if (page == ~0u || pages < PANEL_PAGES || !mode_known) {
-    quit_now = 1; /* no menu: the combination ends it, as before */
+    mx_printf("mxlink: no home menu (GS page %x, %u pages, mode %s): the home button ends the program\n",
+              page, pages, mode_known ? "known" : "not told");
+    quit_now = 1; /* no menu: the home button ends it, as before */
     return 0;
   }
   if (vbl_sema < 0) {
     int sema = mx_sema_create(0, 1);
     if (sema < 0 || mx__irq_vbon_hook(vblank) < 0) {
-      quit_now = 1; /* no vblanks for the menu: the combination ends it */
+      mx_printf("mxlink: no home menu (no vblank hook): the home button ends the program\n");
+      quit_now = 1; /* no vblanks for the menu: the home button ends it */
       return 0;
     }
     vbl_sema = sema;
@@ -285,8 +295,8 @@ int home_run(u32 page, u32 pages) {
   }
   menu_up = 1;
   show(page);
-  /* the combination is still held: wait until it is let go */
-  u32 prev = MX_PAD_QUIT, end = 0, quit = 0;
+  /* the home button is still held: wait until it is let go */
+  u32 prev = MX_PAD_HOME, end = 0, quit = 0;
   while (!end) {
     mx_sema_wait(vbl_sema);
     u32 b = menu_buttons(), p = b & ~prev;
@@ -296,7 +306,7 @@ int home_run(u32 page, u32 pages) {
       sel = (sel + NITEMS - 1) % NITEMS, redraw = 1;
     if (p & MX_PAD_DOWN)
       sel = (sel + 1) % NITEMS, redraw = 1;
-    if (p & (MX_PAD_START | MX_PAD_TRIANGLE))
+    if (p & (MX_PAD_HOME | MX_PAD_START | MX_PAD_TRIANGLE))
       end = 1;
     if (p & MX_PAD_CROSS) {
       if (sel == I_RESUME)

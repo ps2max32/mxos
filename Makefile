@@ -33,6 +33,8 @@ include $(PS2MAX)/libs/maxsdk/mk/maxsdk.mk
 
 # SHOT=1: for tests on PCSX2, the screen saved where the start stops
 CFLAGS += $(if $(SHOT),-DMXLINK_SHOT)
+# maxsdk's protocols with its IOP modules (mxpad.h)
+CFLAGS += -I$(PS2MAX)/libs/maxsdk/common/include
 # EMU=1 (make emu): the kernel for PCSX2, without network, IOP
 # modules or commands: it starts the program in host:mxload.txt
 CFLAGS += $(if $(EMU),-DMXLINK_EMU)
@@ -40,7 +42,7 @@ CFLAGS += $(if $(EMU),-DMXLINK_EMU)
 SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c kirq.c ksched.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
 MODULES = poweroff mxdev9 mxeth mxnet mxfast ioptrap sio2man mcman mcserv padman libsd audsrv \
-          mxio mxsock
+          mxio mxsock usbd mxpad
 
 # resident below the programs' memory: 0x88000 up to the 2 KiB
 # where ps2link.irx writes the host's commands (0xFF800)
@@ -84,7 +86,8 @@ $(OUT)/MXOS/%.irx: $(PS2MAX_IRX)/%.irx
 # build dir whatever OUT is
 MAXSDK_IRX = $(PS2MAX)/build/libs/maxsdk/iop
 $(OUT)/MXOS/mxdev9.irx $(OUT)/MXOS/mxeth.irx $(OUT)/MXOS/mxnet.irx $(OUT)/MXOS/mxfast.irx \
-$(OUT)/MXOS/mxio.irx $(OUT)/MXOS/mxsock.irx $(OUT)/MXOS/usbmass_bd.irx $(OUT)/MXOS/mxata.irx: maxsdk-iop
+$(OUT)/MXOS/mxio.irx $(OUT)/MXOS/mxsock.irx $(OUT)/MXOS/usbmass_bd.irx $(OUT)/MXOS/mxata.irx \
+$(OUT)/MXOS/mxpad.irx: maxsdk-iop
 	@mkdir -p $(dir $@)
 	cp $(MAXSDK_IRX)/$(notdir $@) $@
 maxsdk-iop:
