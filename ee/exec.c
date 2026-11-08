@@ -142,8 +142,15 @@ static void exception_setup(const char **note) {
   mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
 }
 
+/* the ASIDs given out, in turn (1-255; 0 is the kernel's and the programs'
+   not on libmxk). Stale entries of an earlier one are gone: the TLB is the
+   BIOS's again at each end (tlb_restore). */
+static u32 last_asid;
+
 static void kernel_program(void *heap_lo, void *heap_hi, void *vm_lo, void *vm_hi) {
   on_libmxk = 1;
+  last_asid = last_asid % 255 + 1;
+  mx__asid_set(last_asid);
   mx__heap_range(heap_lo, heap_hi);
   mx__vm_image_range(vm_lo, vm_hi);
 }

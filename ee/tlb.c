@@ -6,6 +6,7 @@
    a TLB. */
 
 #include <mx/cpu.h>
+#include <mx/kernel.h>
 
 #include "mxlink.h"
 
@@ -59,16 +60,17 @@ static const struct {
 
 static void tlb_read(u32 i, u32 *pm, u32 *hi, u32 *lo0, u32 *lo1) {
   __asm__ volatile("mtc0 %4, $0\n\tsync.p\n\ttlbr\n\tsync.p\n\t"
-                   "mfc0 %0, $5\n\tmfc0 %1, $10\n\tmfc0 %2, $2\n\tmfc0 %3, $3"
+                   "mfc0 %0, $5\n\tmfc0 %1, $10\n\tmfc0 %2, $2\n\tmfc0 %3, $3\n\t"
+                   "mtc0 %5, $10\n\tsync.p"
                    : "=r"(*pm), "=r"(*hi), "=r"(*lo0), "=r"(*lo1)
-                   : "r"(i));
+                   : "r"(i), "r"(mx__asid));
 }
 
 static void tlb_write(u32 i, u32 pm, u32 hi, u32 lo0, u32 lo1) {
   __asm__ volatile("mtc0 %0, $0\n\tmtc0 %1, $5\n\tmtc0 %2, $10\n\tmtc0 %3, $2\n\tmtc0 %4, $3\n\t"
-                   "sync.p\n\ttlbwi\n\tsync.p"
+                   "sync.p\n\ttlbwi\n\tsync.p\n\tmtc0 %5, $10\n\tsync.p"
                    :
-                   : "r"(i), "r"(pm), "r"(hi), "r"(lo0), "r"(lo1));
+                   : "r"(i), "r"(pm), "r"(hi), "r"(lo0), "r"(lo1), "r"(mx__asid));
 }
 
 /* mxlink's entry as it should be: the upper half without D for the resident
@@ -97,6 +99,9 @@ void tlb_writable(void) {
 void tlb_restore(void) {
   u8 differs[TLB_N];
   int was = mx_di();
+  /* the kernel's address space: ASID 0 (tlbr and tlbwi below set it back
+     to this) */
+  mx__asid_set(0);
   for (u32 i = TLB_FIRST; i < TLB_N; i++) {
     u32 pm, hi, lo0, lo1;
     if (i == TLB_RESIDENT) {
