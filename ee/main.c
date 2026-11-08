@@ -21,6 +21,7 @@
 #include <mx/string.h>
 #include <mx/timer.h>
 
+#include "ksched.h"
 #include "mxlink.h"
 
 /* What survives ExecPS2: .bss is cleared and .data set back (hook.S), so a
@@ -51,6 +52,12 @@ static s32 launch_cleanup KEPT = 0; /* the program before it ended */
 /* the next return goes to the text screen, not to the shell: after a host's
    program, and after the shell ended itself (it may crash at each start) */
 static s32 no_shell KEPT = 0;
+/* the BIOS's threads for the next program: one not built for kernel version
+   10, which calls the BIOS's thread and semaphore syscalls itself (exec.c
+   restarts mxlink so, and back after it) */
+static s32 bios_mode KEPT = 0;
+/* the relaunched program is the shell (exec_shell_next again after the restart) */
+static s32 launch_shell KEPT = 0;
 /* a program has ended and waits for the command thread (program_ended) */
 static volatile int ending;
 
@@ -223,6 +230,10 @@ static void restart(void) {
      host now would end in the kernel's "DMAC(5) Handler does not exist" and
      its break. cmd_init turns it on again. */
   mx_bios_disable_dmac(MX_DMAC_SIF0);
+  /* the BIOS's interrupt table: until main turns the kernel's on again, an
+     interrupt must not find the kernel's entry with its state half reset */
+  mx_di();
+  kirq_off();
   mx_bios_exec_ps2(mxlink_start, _gp, 1, argv);
   for (;;)
     ;
@@ -298,6 +309,24 @@ int mxlink_crash(struct mx_crash *c) {
 
 /* the path of a program that waits for one it started (step 2c) */
 static char parked_path[sizeof last_path];
+
+/* exec_elf: the program needs the other kind of threads (the kernel's or
+   the BIOS's): mxlink starts again in that mode and starts it then */
+void mxlink_relaunch(int bios, int argc, const char *args, u32 args_len, const char *swap) {
+  bios_mode = bios;
+  launch_shell = exec_shell_was();
+  u32 n = swap ? strlen(swap) : 0;
+  if (n >= sizeof launch_swap)
+    n = 0;
+  memcpy(launch_swap, swap ? swap : "", n);
+  launch_swap[n] = 0;
+  if (args_len > sizeof launch_args)
+    args_len = sizeof launch_args;
+  memcpy(launch_args, args, args_len);
+  launch_len = args_len;
+  launch_argc = argc;
+  restart();
+}
 
 int mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
   u32 n = swap ? strlen(swap) : 0;
@@ -639,7 +668,13 @@ int main(int argc, char **argv) {
     restart();
   }
 
-  kirq_on();
+  /* the kernel's interrupt entry and threads (mx OS plan, step 2d), unless
+     the next program needs the BIOS's (bios_mode: it has no kernel note of
+     version 10) */
+  if (!bios_mode) {
+    kirq_on();
+    ksched_init();
+  }
   con_init();
   screen();
   status_state(ST_BOOT, "IOP");
@@ -683,6 +718,9 @@ static void after_program(void) {
     int argc = launch_argc;
     launch_argc = 0;
     exec_swap(launch_swap[0] ? launch_swap : 0);
+    if (launch_shell)
+      exec_shell_next();
+    launch_shell = 0;
     cmd_launch(argc, launch_args, launch_len);
   } else if (shell_there()) {
     /* it is told what came back: argv[1] the program, argv[2] its status */

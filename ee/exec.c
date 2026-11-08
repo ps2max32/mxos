@@ -18,6 +18,7 @@
 #include <mx/string.h>
 #include <mx/vm.h>
 
+#include "ksched.h"
 #include "mxlink.h"
 
 struct ehdr {
@@ -69,6 +70,8 @@ static int shell, next_shell;
 int exec_running(void) { return user_tid != 0; }
 int exec_in_shell(void) { return user_tid && shell; }
 void exec_shell_next(void) { next_shell = 1; }
+/* exec_elf decided on a relaunch: was it to start the shell (main.c keeps it over the restart) */
+int exec_shell_was(void) { return shell; }
 /* What mxlink takes: ee/resident.ld says, mxlink-high (maxsdk's script) is
    its code up to its stack's end. */
 void exec_self(u32 *start, u32 *end) {
@@ -119,9 +122,9 @@ static u32 core_end, frames_hi;
 /* A libmxk program's notes (maxsdk's src/base/kstubs.c, <mx/loader.h>'s
    MX_CORE_HEAP): where its mx__core_off is, if it was built for a kernel of
    version 9 or later, and the core heap it asks for (0: none). */
-static u32 *mxk_note(int fd, const struct phdr *ph, u32 n, u32 *heap) {
+static u32 *mxk_note(int fd, const struct phdr *ph, u32 n, u32 *heap, u32 *version) {
   u32 *at = 0;
-  *heap = 0;
+  *heap = *version = 0;
   for (u32 i = 0; i < n; i++) {
     const struct phdr *p = &ph[i];
     u32 w[16];
@@ -137,8 +140,10 @@ static u32 *mxk_note(int fd, const struct phdr *ph, u32 n, u32 *heap) {
       const u32 *d = &w[k + 4];
       if (!memcmp(&w[k + 3], "MXK", 4)) {
         if (w[k + 2] == MXK_NOTE_TYPE && w[k + 1] == 8 && d[0] >= 9 && d[1] >= LOW && d[1] < TOP &&
-            !(d[1] & 3))
+            !(d[1] & 3)) {
           at = (u32 *)(uintptr_t)d[1];
+          *version = d[0];
+        }
         else if (w[k + 2] == MXK_NOTE_HEAP && w[k + 1] == 4)
           *heap = d[0];
       }
@@ -358,6 +363,7 @@ static const struct mxk_services kernel = {
     .home_wanted = home_wanted,
     .home_run = home_run,
     .irq_tables = end_irq_tables,
+    .kthreads = &ksched_kthreads,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {
@@ -424,11 +430,22 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     return fail(fd, path, "a loader (below 1 MiB) with VM segments");
   /* step 2b: a libmxk program of version 9 with VM, its core at a physical
      run of its own (core_place), from here, so that the load goes there */
-  u32 *core_off_at = 0, heap = 0;
+  u32 *core_off_at = 0, heap = 0, version = 0;
   core_moved = 0;
   core_vm = vm;
-  if (!loader && self_end <= LOW)
-    core_off_at = mxk_note(fd, ph, eh.phnum, &heap);
+  if (!loader)
+    core_off_at = mxk_note(fd, ph, eh.phnum, &heap, &version);
+  /* step 2d: a program built for kernel version 10 runs on the kernel's
+     threads, any other on the BIOS's; mxlink starts again in the mode it
+     needs, and starts it then */
+  if (!loader && (version >= 10) != ksched_active()) {
+    mx_fio_close(fd);
+    con_log(CON_GREY, "  %s: mxlink starts again with %s threads", path,
+            version >= 10 ? "the kernel's" : "the BIOS's");
+    mxlink_relaunch(version < 10, argc, args, args_len, next_swap);
+  }
+  if (self_end > LOW)
+    core_off_at = 0;
   int note_v9 = core_off_at != 0;
   if (core_off_at && !vm && !heap)
     core_off_at = 0; /* without VM: all memory, unless it asks for a core heap */

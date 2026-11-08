@@ -1,8 +1,8 @@
 /* The kernel first at every INTC and DMAC interrupt (mx OS plan, step 2d-1;
    docs/bios.md, probe/p37_irqhook.c): the BIOS's interrupt table
    (0x8001_5380) points its INTC and DMAC entries at kirq.S, which runs
-   kirq() and goes on into the BIOS's handlers. The base of the kernel's own
-   interrupt dispatch and thread switch (2d-2).
+   kirq(): with the kernel's threads on (2d-2) the kernel's dispatch handles
+   the lines whole (ksched.c), else it goes on into the BIOS's handlers.
 
    Only while the kernel or a program built for it runs: before a program
    without the kernel's note (ps2sdk's, libmx, older builds), which may load
@@ -12,12 +12,13 @@
 #include <mx/bios.h>
 #include <mx/cpu.h>
 
+#include "ksched.h"
 #include "mxlink.h"
 
 #define TABLE 0x80015380u
 #define ENTRY_INTC (TABLE + 4 * 2)
 #define ENTRY_DMAC (TABLE + 4 * 3)
-#define POKE_SYSCALL 0x5C
+#define POKE_SYSCALL 0x69 /* RFU105: unused by the BIOS (0x5C is EnableIntcHandler) */
 
 void kirq_intc(void);
 void kirq_dmac(void);
@@ -30,8 +31,13 @@ u32 kirq_orig[2] __attribute__((section(".kept"))) = {0, 0};
 
 static volatile u32 counts[2];
 
-/* at EXL = 1, interrupts off: line 0 INTC, 1 DMAC */
-void kirq(int line) { counts[line & 1]++; }
+/* kernel mode, interrupts off: line 0 INTC, 1 DMAC, epc the interrupted
+   thread's. The kernel's handlers (ksched.c) of the pending causes; returns
+   what is left for the BIOS's handler (non-zero: go on into it). */
+u32 kirq(int line, u32 epc) {
+  counts[line & 1]++;
+  return ksched_active() ? ksched_dispatch(line, epc) : 1;
+}
 
 void kirq_counts(u32 *intc, u32 *dmac) {
   *intc = counts[0];

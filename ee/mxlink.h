@@ -121,6 +121,7 @@ int exec_running(void);
 int exec_in_shell(void);
 /* The next exec_elf starts the shell. */
 void exec_shell_next(void);
+int exec_shell_was(void);
 /* Is this the resident mxlink, below the programs (not mxlink-high)? */
 int exec_resident(void);
 /* The memory mxlink takes. */
@@ -134,6 +135,8 @@ void exec_kill(void);
 void tlb_restore(void);
 /* kirq.c: the kernel first at INTC and DMAC interrupts (step 2d-1) */
 void kirq_on(void);
+void mxlink_relaunch(int bios, int argc, const char *args, u32 args_len, const char *swap)
+    __attribute__((noreturn));
 void kirq_off(void);
 void kirq_counts(u32 *intc, u32 *dmac);
 int tlb_core_map(u32 va_end, u32 off);
