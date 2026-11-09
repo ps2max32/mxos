@@ -476,6 +476,11 @@ static void kernel_heaps(struct mx_heap *h[3]) {
   h[0] = mx_heap_pinned, h[1] = mx_heap_stream, h[2] = mx_heap_paged;
 }
 
+static int kmem_read(u32 phys, void *to, u32 n) { return kmem_copy(phys, to, n, 0); }
+static int kmem_write(u32 phys, const void *from, u32 n) {
+  return kmem_copy(phys, (void *)(uintptr_t)from, n, 1);
+}
+
 /* the kernel's services for libmxk (<mx/kernel.h>) */
 static const char *program_swap;
 static const char *kernel_swap(void) { return program_swap; }
@@ -537,6 +542,8 @@ static const struct mxk_services kernel = {
     .timer_claim = mx_timer_claim,
     .timer_release = mx_timer_release,
     .timer_epc = mx_timer_epc,
+    .phys_read = kmem_read,
+    .phys_write = kmem_write,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {

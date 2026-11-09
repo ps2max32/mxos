@@ -11,6 +11,7 @@
 
 #include <mx/bios.h>
 #include <mx/cpu.h>
+#include <mx/vm.h>
 
 #include "ksched.h"
 #include "mxlink.h"
@@ -44,25 +45,68 @@ void kirq_counts(u32 *intc, u32 *dmac) {
   *dmac = counts[1];
 }
 
-/* kernel memory written or read in kernel mode, by a syscall handler */
-static u32 k_poke(u32 a, u32 v, u32 write) {
-  if (write)
+/* kernel memory written or read in kernel mode, by a syscall handler: op 0
+   reads the word at a, 1 writes v there; 2 copies n bytes from physical v
+   (through kseg0) to a, 3 from a to physical v (a: the caller's memory,
+   mapped under its ASID in kernel mode too) */
+static u32 k_poke(u32 a, u32 v, u32 op, u32 n) {
+  if (op >= 2) {
+    volatile u8 *m = (volatile u8 *)(uintptr_t)(0x80000000u | v), *u = (volatile u8 *)(uintptr_t)a;
+    if (op == 2)
+      for (u32 i = 0; i < n; i++)
+        u[i] = m[i];
+    else
+      for (u32 i = 0; i < n; i++)
+        m[i] = u[i];
+    return n;
+  }
+  if (op)
     *(volatile u32 *)a = v;
   return *(volatile u32 *)a;
 }
-static u32 kcall(u32 a, u32 v, u32 write) {
+static int on;
+
+static u32 kcall4(u32 a, u32 v, u32 op, u32 n) {
   register u32 a0 __asm__("$4") = a;
   register u32 a1 __asm__("$5") = v;
-  register u32 a2 __asm__("$6") = write;
+  register u32 a2 __asm__("$6") = op;
+  register u32 a3 __asm__("$7") = n;
   register u32 v1 __asm__("$3") = POKE_SYSCALL;
   register u32 v0 __asm__("$2");
-  __asm__ volatile("syscall" : "=r"(v0), "+r"(v1) : "r"(a0), "r"(a1), "r"(a2) : "memory");
+  __asm__ volatile("syscall"
+                   : "=r"(v0), "+r"(v1)
+                   : "r"(a0), "r"(a1), "r"(a2), "r"(a3)
+                   : "memory");
   return v0;
+}
+static u32 kcall(u32 a, u32 v, u32 write) { return kcall4(a, v, write, 0); }
+
+/* kernel version 21 (<mx/proc.h>'s mx_phys_read, mx_phys_write): the EE's
+   physical memory to or from the caller's core memory, in pieces of 4 KiB
+   (interrupts are off in the syscall). Writing is a service's only (the
+   host link's writemem). 0, or -1. */
+int kmem_copy(u32 phys, void *buf, u32 n, int write) {
+  u32 size = mx_bios_get_memory_size(), a = (u32)(uintptr_t)buf;
+  if (!on || phys >= size || n > size - phys || !n || mx_is_vm(buf) || a < 0x100000u ||
+      a + n < a || a + n > 0x02000000u || (write && !exec_service_caller()))
+    return -1;
+  for (u32 done = 0; done < n;) {
+    u32 k = n - done > 4096 ? 4096 : n - done;
+    /* touched in user mode first: a buffer that is not the caller's faults
+       there, in its thread, not in the syscall */
+    (void)*(volatile u8 *)(uintptr_t)(a + done);
+    (void)*(volatile u8 *)(uintptr_t)(a + done + k - 1);
+    kcall4(a + done, phys + done, write ? 3 : 2, k);
+    done += k;
+  }
+  if (write) {
+    mx_bios_flush_cache(0);
+    mx_bios_flush_cache(2);
+  }
+  return 0;
 }
 
 static u32 kseg0(void (*f)(void)) { return 0x80000000u | ((u32)(uintptr_t)f & 0x1FFFFFFFu); }
-
-static int on;
 
 void kirq_on(void) {
   if (on)

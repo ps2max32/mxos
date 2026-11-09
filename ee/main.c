@@ -443,10 +443,10 @@ int kproc_service(void) {
 /* proc_kill: the program in front ended by another process as if it had
    called mx_exit(status), without the restart (which would end the caller
    too): -1 when that cannot be */
-/* the shell ended by the service (the host link, for the host): its IOP
-   kept and cleaned up, as for the takeover of old, not reset with the
-   modules read again: the card did not answer after it (the shell's
-   drivers, in the middle of a call) */
+/* the shell ended by the service (the host link, for the host): the
+   restart, its IOP kept and cleaned up, as for the takeover of old, not
+   reset with the modules read again: the card did not answer after it (the
+   shell's drivers, in the middle of a call) */
 static int shell_stopped;
 /* its end prints no test end marker: the host's run is the next program */
 static s32 quiet_end KEPT = 0;
@@ -1000,13 +1000,15 @@ void program_ended(void) {
   end_cleanup();
   tlb_restore();
   kirq_on();
-  if (!iop_kept() || iop_cleanup_checked() < 0) {
+  /* the shell ended by the service: always the restart, as the takeover
+     did (without it the next program crashed at once, before its first
+     line: something of the shell's went on) */
+  if (shell_stopped || !iop_kept() || iop_cleanup_checked() < 0) {
     if (shell_stopped)
       launch_cleanup = 1, quiet_end = 1;
     shell_stopped = 0;
     restart();
   }
-  shell_stopped = 0;
   u32 threads_left, semas_left, calls_left;
   end_counts(&threads_left, &semas_left, &calls_left);
   end_reset_state();

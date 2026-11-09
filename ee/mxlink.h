@@ -243,6 +243,7 @@ int kmsg_events(int port);
 int kmsg_post(int proc, const void *data, u32 len);
 int kmsg_iop_channel(u32 cid, int port);
 int kmsg_host_post(const void *data, u32 len);
+int kmem_copy(u32 phys, void *buf, u32 n, int write);
 void klog_init(void);
 void klog_write(const char *s, u32 n);
 int klog_tty_write(const char *s, u32 n);
