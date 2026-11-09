@@ -235,5 +235,9 @@ int kmsg_receive(int port, void *buf, u32 max, struct mx_msg *m);
 int kmsg_reply(int msg, const void *reply, u32 len);
 int kmsg_events(int port);
 int kmsg_post(int proc, const void *data, u32 len);
+void klog_init(void);
+void klog_write(const char *s, u32 n);
+int klog_tty_write(const char *s, u32 n);
+int klog_read(u32 *pos, void *buf, u32 max, int *proc, int wait);
 
 #endif

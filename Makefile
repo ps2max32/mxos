@@ -32,7 +32,8 @@ CHIME_IRX   = $(OUT)/iop/chime.irx
 # variable, so the link keeps only what mxlink uses (it has to fit below
 # 1 MiB); the other programs' libmx stays as it is
 MAXSDK_OUT = $(OUT)/maxsdk
-export EXTRA_CFLAGS = -Os -ffunction-sections -fdata-sections
+# its maxsdk too: a small debug hold buffer (the kernel never holds)
+export EXTRA_CFLAGS = -Os -ffunction-sections -fdata-sections -DMX_DEBUG_HOLD_BYTES=256
 
 include $(PS2MAX)/libs/maxsdk/mk/maxsdk.mk
 
@@ -47,7 +48,7 @@ CFLAGS += $(if $(EMU),-DMXLINK_EMU)
 # to try new ones with the one-shot boot
 CFLAGS += $(if $(MODULE_DIR),-DMODULE_DIR='"$(MODULE_DIR)"')
 
-SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c kirq.c ksched.c kproc.c kmsg.c
+SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c kirq.c ksched.c kproc.c kmsg.c klog.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
 MODULES = poweroff mxdev9 mxeth mxnet mxfast ioptrap sio2man mcman mcserv padman libsd mxsnd \
           mxio mxsock usbd mxpad

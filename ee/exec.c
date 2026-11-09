@@ -467,7 +467,7 @@ static const struct mxk_services kernel = {
     .heaps = kernel_heaps,
     .mx__core_fault = mx__core_fault,
     .mx__paddr_fault = mx__paddr_fault,
-    .mx_tty_write = mx_tty_write,
+    .mx_tty_write = klog_tty_write,
 #define MXK_ENTRY(ret, name, params, args) .name = name,
     MXK_CALLS(MXK_ENTRY)
     .fio_ending = mx__fio_ending,
@@ -494,6 +494,7 @@ static const struct mxk_services kernel = {
     .proc_kill = kproc_kill,
     .sleep_us = mx_sleep_us,
     .proc_events = kmsg_events,
+    .log_read = klog_read,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {

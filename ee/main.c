@@ -693,6 +693,7 @@ static void emu_main(void) {
     kirq_on();
     ksched_init();
     kmsg_init();
+    klog_init();
     mx__sleep_init();
   }
   int fd = mx_sif_init() < 0 ? -1 : mx_fio_open("host:mxload.txt", MX_FIO_RDONLY);
@@ -752,6 +753,7 @@ int main(int argc, char **argv) {
     kirq_on();
     ksched_init();
     kmsg_init();
+    klog_init();
     mx__sleep_init();
   }
   con_init();
