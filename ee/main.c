@@ -737,7 +737,6 @@ static int shell_there(void) {
 
 static void screen(void) {
   con_line(ROW_TITLE, CON_WHITE, "mx kernel %s", MXLINK_VERSION);
-  con_text(CON_COLS - 16, ROW_TITLE, CON_GREY, "maxsdk  ps2link");
   const char *ip = if_conf, *mask = ip + strlen(ip) + 1, *gw = mask + strlen(mask) + 1;
   con_line(ROW_NET, CON_WHITE, "Net:    %s  mask %s  gw %s", ip, mask, gw);
   con_line(ROW_HOST, CON_WHITE, "Boot:   %s%s", boot_path, restarts > 1 ? "  (restarted)" : "");
