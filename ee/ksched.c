@@ -551,7 +551,10 @@ static int add_handler(int line, int n, khandler fn, int next, void *arg) {
   for (int i = 1; i <= NHANDLERS; i++)
     if (!handler[i].fn) {
       handler[i].fn = fn, handler[i].arg = arg, handler[i].line = (s16)line, handler[i].n = (s16)n;
-      handler[i].proc = cur()->proc;
+      /* the kernel's own code (below 1 MiB: its irq.c, added in a program's
+         thread at its first call that needed it) is the kernel's, process
+         0; a program's in its memory, its process */
+      handler[i].proc = (u32)(uintptr_t)fn < 0x00100000u ? 0 : cur()->proc;
       int at = 0;
       if (next == -1)
         at = norder;

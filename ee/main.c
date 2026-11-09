@@ -792,7 +792,6 @@ static u32 default_args(char *to, u32 max, int *argc) {
    and arguments, in words. The program's end marker ends the run. */
 static void emu_main(void) {
   static char args[256];
-  con_init();
   if (returned) {
     mx_printf("mxlink: %s returned, exit status %d\n", last_path, (int)last_status);
     mx_printf("@@PS2TEST_END@@ status=%d\n", (int)last_status);
@@ -809,6 +808,10 @@ static void emu_main(void) {
     klog_init();
     mx__sleep_init();
   }
+  /* after the kernel's threads, as in main: a vblank handler the screen
+     adds before them is the BIOS's, which the kernel's interrupt entry
+     never calls (its hooks, the SIF waits' timeouts, never ran) */
+  con_init();
   u32 len = 0;
   int words = mx_sif_init() < 0 ? 0 : read_words("host:mxload.txt", args, sizeof args, &len);
   if (!words) {
