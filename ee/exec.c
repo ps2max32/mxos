@@ -206,6 +206,12 @@ static u32 mem_top(void) {
   return park.on ? park.core_phys : mx_bios_get_memory_size() & ~(MIB - 1);
 }
 int exec_parked(void) { return park.on; }
+/* the physical memory of the program that ends (sound_off): all from 1 MiB
+   up but the core of one that waits or runs beside it, at the top */
+void exec_end_range(u32 *lo, u32 *hi) {
+  *lo = LOW;
+  *hi = park.on ? park.core_phys : mx_bios_get_memory_size();
+}
 
 /* the program a parked one started (proc_spawn, proc_wait; kernel version
    14): its process once it runs, and the last one's end */

@@ -42,9 +42,9 @@ What it adds to ps2link:
 - A short boot sound (`iop/chime.c`), after every IOP reset: at boot, and
   when a program that loaded IOP modules returns. It resets the SPU2 first
   (the IOP's reset alone leaves the SPU2 playing). A return with the IOP kept
-  makes no sound: audsrv mutes the stream and stays running for the next
-  program, and the chime's quiet mode stops the voices. The module does not
-  stay on the IOP.
+  makes no sound: maxsdk's mxsnd (booted with libsd) stops the ending
+  program's voices and stream and stays running for the next program. The
+  module does not stay on the IOP.
 - A shell: `mc0:/MXOS/MXSHELL.ELF`, if it is there, is started at boot and
   after each program it started (`mx_loader_launch`). A game built on
   maxsdk for kernel version 9 runs beside it instead: the shell waits in

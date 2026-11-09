@@ -217,6 +217,7 @@ int end_proc_parked(void);
 const char *parked_program(void);
 int kproc_list(struct mx_proc_info *p, int max);
 int kproc_self(void);
+void exec_end_range(u32 *lo, u32 *hi);
 int kproc_spawn(int argc, const char *args, u32 args_len, const char *swap);
 int kproc_wait(int id, int *status, int nohang);
 int kproc_kill(int id, int status);

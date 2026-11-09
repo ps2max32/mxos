@@ -49,7 +49,7 @@ CFLAGS += $(if $(MODULE_DIR),-DMODULE_DIR='"$(MODULE_DIR)"')
 
 SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c kirq.c ksched.c kproc.c kmsg.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
-MODULES = poweroff mxdev9 mxeth mxnet mxfast ioptrap sio2man mcman mcserv padman libsd audsrv \
+MODULES = poweroff mxdev9 mxeth mxnet mxfast ioptrap sio2man mcman mcserv padman libsd mxsnd \
           mxio mxsock usbd mxpad
 
 # resident below the programs' memory: 0x88000 up to the 2 KiB
@@ -94,14 +94,14 @@ $(OUT)/MXOS/%.irx: $(PS2MAX_IRX)/%.irx
 	cp $< $@
 
 # maxsdk's network drivers, stack and fast path, its file and socket
-# services, its USB mass storage driver in place of ps2sdk's and its HDD
+# services, its sound, its USB mass storage driver in place of ps2sdk's and its HDD
 # driver: all built by one make of maxsdk's iop/ (one per module would run
 # in parallel with -j and build the same files at once), into maxsdk's own
 # build dir whatever OUT is
 MAXSDK_IRX = $(PS2MAX)/build/libs/maxsdk/iop
 $(OUT)/MXOS/mxdev9.irx $(OUT)/MXOS/mxeth.irx $(OUT)/MXOS/mxnet.irx $(OUT)/MXOS/mxfast.irx \
 $(OUT)/MXOS/mxio.irx $(OUT)/MXOS/mxsock.irx $(OUT)/MXOS/usbmass_bd.irx $(OUT)/MXOS/mxata.irx \
-$(OUT)/MXOS/mxpad.irx: maxsdk-iop
+$(OUT)/MXOS/mxpad.irx $(OUT)/MXOS/mxsnd.irx: maxsdk-iop
 	@mkdir -p $(dir $@)
 	cp $(MAXSDK_IRX)/$(notdir $@) $@
 maxsdk-iop:

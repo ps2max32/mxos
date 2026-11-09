@@ -89,7 +89,10 @@ static const char *const module_names[] = {
     /* the network: maxsdk's drivers and stack (libs/maxsdk/docs/iop-drivers.md),
        and mxfast, the fast path for host: files and the console (the tty) */
     "mxdev9", "mxeth", "mxnet", "mxfast",
-    "ioptrap", "ps2link", "sio2man", "mcman", "mcserv", "padman", "libsd", "audsrv",
+    "ioptrap", "ps2link", "sio2man", "mcman", "mcserv", "padman",
+    /* maxsdk's sound (<mx/snd.h>; iop/sound/mxsnd), on libsd: programs bind
+       to it and load nothing */
+    "libsd", "mxsnd",
     /* not on an older card: files then go through FILEIO, and there are no sockets */
     "mxio", "mxsock",
     /* not on an older card: no USB pads (mxpad, on usbd: libs/maxsdk/docs/pad-bt-plan.md) */
@@ -496,25 +499,25 @@ static int iop_kept(void) {
    it was. A program that crashed or was stopped did none of this itself. */
 #define PAD_SID 0x8000010Fu
 #define PAD_CLOSE 0x8000010D
-#define AUDSRV_SID 0x870884eu
-#define AUDSRV_STOP_AUDIO 0x0006
-#define AUDSRV_INIT_ADPCM 0x0016
+#define MXSND_SID 0x4D58534Eu /* libs/maxsdk/common/include/mxsnd.h */
+#define MXSND_STOP 3
 static struct mx_sif_client pad_rpc, snd_rpc;
 static s32 rpc_cmd[32] MX_DMA_LINES, rpc_res[32] MX_DMA_LINES;
 
-/* audsrv stays: its play thread runs on for the next program, with the stream
-   muted. (AUDSRV_QUIT would end that thread for good: a
-   later AUDSRV_INIT does nothing.) */
+/* mxsnd stays for the next program: its status writes into the program's
+   memory stop, and its voices and stream are silenced, when its status area
+   is in the ending program's physical memory (exec_end_range: not the one
+   beside it, whose sound goes on). Without mxsnd, the chime's quiet mode
+   stops the voices. */
 static void sound_off(void) {
-  if (mx_sif_bind_tries(&snd_rpc, AUDSRV_SID, 2) < 0 || !snd_rpc.server)
-    return;
-  static const int calls[] = {AUDSRV_STOP_AUDIO, AUDSRV_INIT_ADPCM};
-  for (u32 i = 0; i < 2; i++) {
+  if (mx_sif_bind_tries(&snd_rpc, MXSND_SID, 2) == 0 && snd_rpc.server) {
+    u32 lo, hi;
+    exec_end_range(&lo, &hi);
     volatile s32 *a = MX_UNCACHED(rpc_cmd);
-    a[0] = a[1] = a[2] = a[3] = 0;
-    mx_sif_call(&snd_rpc, calls[i], (void *)a, 16, (void *)MX_UNCACHED(rpc_res), 4);
+    a[0] = (s32)lo, a[1] = (s32)hi, a[2] = a[3] = 0;
+    mx_sif_call(&snd_rpc, MXSND_STOP, (void *)a, 16, (void *)MX_UNCACHED(rpc_res), 4);
+    return;
   }
-  /* neither stops a voice that is playing: the chime's quiet mode does */
   int fd = module_open(M_CHIME), size = fd < 0 ? -1 : mx_fio_lseek(fd, 0, MX_FIO_SEEK_END);
   if (size > 0 && mx_fio_lseek(fd, 0, MX_FIO_SEEK_SET) == 0 &&
       mx_fio_read(fd, MODULE_MEM, (u32)size) == size)
