@@ -33,9 +33,10 @@ CHIME_IRX   = $(OUT)/iop/chime.irx
 # 1 MiB); the other programs' libmx stays as it is
 MAXSDK_OUT = $(OUT)/maxsdk
 # its maxsdk too: a small debug hold buffer (the kernel never holds), and
-# mx_sleep_us on timer 1 (timer 0 is the programs': mx_hires)
+# its software timers (mx_sleep_us, mx_timer_add) on timer 1, timer 0 lent out
+# (mx_timer_claim: mx_hires)
 export EXTRA_CFLAGS = -Os -ffunction-sections -fdata-sections -DMX_DEBUG_HOLD_BYTES=256 \
-                      -DMX_SLEEP_TIMER=1
+                      -DMX_SOFT_TIMER=1
 
 include $(PS2MAX)/libs/maxsdk/mk/maxsdk.mk
 

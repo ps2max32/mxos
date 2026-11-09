@@ -18,6 +18,7 @@
 #include <mx/sif.h>
 #include <mx/string.h>
 #include <mx/thread.h>
+#include <mx/timer.h>
 #include <mx/vm.h>
 
 #include "ksched.h"
@@ -525,6 +526,11 @@ static const struct mxk_services kernel = {
     .log_read = klog_read,
     .iop_channel = kmsg_iop_channel,
     .proc_service = kproc_service,
+    .timer_add = mx_timer_add,
+    .timer_remove = mx_timer_remove,
+    .timer_claim = mx_timer_claim,
+    .timer_release = mx_timer_release,
+    .timer_epc = mx_timer_epc,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {

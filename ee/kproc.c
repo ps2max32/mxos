@@ -139,3 +139,12 @@ void kproc_side_end(void) {
   mx_irq_restore(was);
 
 }
+
+/* maxsdk's timers (src/irq/timer.c): the process a timer is added for, and
+   its callback run in that process's address space (as a handler of it) */
+int mx__timer_proc(void) {
+  int p = ksched_active() ? ksched_thread_proc(mx_bios_get_thread_id()) : 0;
+  return p > 0 ? p : 0;
+}
+int mx__timer_enter(int proc) { return kproc_handler_enter(proc); }
+void mx__timer_leave(void) { kproc_handler_leave(); }

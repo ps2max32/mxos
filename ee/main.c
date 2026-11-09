@@ -806,7 +806,7 @@ static void emu_main(void) {
     ksched_init();
     kmsg_init();
     klog_init();
-    mx__sleep_init();
+    mx__timer_init();
   }
   /* after the kernel's threads, as in main: a vblank handler the screen
      adds before them is the BIOS's, which the kernel's interrupt entry
@@ -864,7 +864,7 @@ int main(int argc, char **argv) {
     ksched_init();
     kmsg_init();
     klog_init();
-    mx__sleep_init();
+    mx__timer_init();
   }
   con_init();
   screen();
