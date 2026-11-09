@@ -39,7 +39,8 @@ static struct kport {
 static struct kslot {
   u8 state, port, from, gen;
   u8 orphan; /* its sender is gone: dropped at the reply */
-  u8 pad[3];
+  u8 post;   /* the kernel's (an event): no sender, free once received */
+  u8 pad[2];
   s16 sema;  /* the sender waits on it for its reply */
   u16 len, max;
   s32 result;
@@ -48,6 +49,12 @@ static struct kslot {
 } slots[MX_MSG_SLOTS];
 
 static int free_sema = -1;
+
+#define NEVENTS 4
+static struct {
+  u8 proc, port;
+} evport[NEVENTS];
+
 static u32 seq;
 
 struct sema_param {
@@ -65,6 +72,7 @@ static int self_proc(void) { return ksched_thread_proc(mx_bios_get_thread_id());
 void kmsg_init(void) {
   memset(ports, 0, sizeof ports);
   memset(slots, 0, sizeof slots);
+  memset(evport, 0, sizeof evport);
   free_sema = sema_new(MX_MSG_SLOTS, MX_MSG_SLOTS);
   for (int i = 0; i < MX_MSG_SLOTS; i++)
     slots[i].sema = (s16)sema_new(0, 1);
@@ -133,7 +141,12 @@ static void port_gone(int i, int dead) {
   ports[i].used = 0;
   for (int k = 0; k < MX_MSG_SLOTS; k++) {
     struct kslot *s = &slots[k];
-    if (s->port == i && !s->orphan &&
+    if (s->port == i && s->post && s->state == S_QUEUED) {
+      s->state = S_FREE, s->post = 0;
+      mx_bios_isignal_sema(free_sema);
+      continue;
+    }
+    if (s->port == i && !s->orphan && !s->post &&
         (s->state == S_QUEUED || s->state == S_TAKEN || (dead && s->state == S_REPLYING))) {
       s->result = -2, s->state = S_REPLIED;
       mx_bios_isignal_sema(s->sema);
@@ -226,7 +239,64 @@ int kmsg_receive(int port, void *buf, u32 max, struct mx_msg *m) {
   memcpy(buf, s->data, n);
   if (m)
     m->len = s->len, m->from = s->from;
-  return (int)(s - slots) + 1 + (s->gen << 8);
+  int id = (int)(s - slots) + 1 + (s->gen << 8);
+  if (s->post) {
+    /* an event: nothing waits for a reply */
+    was = mx_di();
+    s->gen++, s->post = 0, s->state = S_FREE;
+    mx_irq_restore(was);
+    mx_bios_signal_sema(free_sema);
+  }
+  return id;
+}
+
+/* ---- events (kernel version 15): the kernel's messages to a process ----- */
+
+int kmsg_events(int port) {
+  int proc = self_proc(), r = -1;
+  int was = mx_di();
+  struct kport *p = port_of(port);
+  if (proc > 0 && (port == 0 || (p && p->proc == proc))) {
+    int free = -1;
+    for (int i = 0; i < NEVENTS; i++) {
+      if (evport[i].proc == proc)
+        evport[i].proc = 0;
+      if (!evport[i].proc && free < 0)
+        free = i;
+    }
+    if (!port)
+      r = 0;
+    else if (free >= 0)
+      evport[free].proc = (u8)proc, evport[free].port = (u8)port, r = 0;
+  }
+  mx_irq_restore(was);
+  return r;
+}
+
+/* An event to proc's event port, if it has one: in a kernel thread (the
+   command thread), without waiting: a full queue drops it (-1). */
+int kmsg_post(int proc, const void *data, u32 len) {
+  if (free_sema < 0 || proc <= 0 || len > MX_MSG_MAX)
+    return -1;
+  int was = mx_di(), port = 0;
+  for (int i = 0; i < NEVENTS; i++)
+    if (evport[i].proc == proc)
+      port = evport[i].port;
+  struct kport *p = port_of(port);
+  struct kslot *s = 0;
+  if (p && p->proc == proc && mx_bios_ipoll_sema(free_sema) >= 0)
+    for (int k = 0; k < MX_MSG_SLOTS && !s; k++)
+      if (slots[k].state == S_FREE)
+        s = &slots[k];
+  if (s) {
+    memcpy(s->data, data, len);
+    s->from = 0, s->orphan = 0, s->post = 1;
+    s->port = (u8)(port - 1), s->len = (u16)len, s->max = 0;
+    s->seq = ++seq, s->state = S_QUEUED;
+    mx_bios_isignal_sema(p->sema);
+  }
+  mx_irq_restore(was);
+  return s ? 0 : -1;
 }
 
 int kmsg_reply(int msg, const void *reply, u32 len) {
@@ -263,6 +333,9 @@ void kmsg_proc_end(int proc) {
   if (proc <= 0 || free_sema < 0)
     return;
   int was = mx_di();
+  for (int i = 0; i < NEVENTS; i++)
+    if (evport[i].proc == proc)
+      evport[i].proc = 0;
   for (int i = 0; i < NPORTS; i++)
     if (ports[i].used && ports[i].proc == proc)
       port_gone(i, 1);

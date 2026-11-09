@@ -341,6 +341,11 @@ void exec_unpark(int status) {
   park.status = status;
   park.done = 1;
   last_child = park.child, last_child_status = status;
+  if (park.child) {
+    /* its end to this one's event port (kernel version 15) */
+    struct mx_event e = {MX_EVENT_END, park.child, status, 0};
+    kmsg_post(end_proc_front(), &e, sizeof e);
+  }
   if (side)
     ksched_proc_hold(side, 0);
   if (park.waiter)
@@ -482,6 +487,7 @@ static const struct mxk_services kernel = {
     .proc_wait = kproc_wait,
     .proc_kill = kproc_kill,
     .sleep_us = mx_sleep_us,
+    .proc_events = kmsg_events,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {
