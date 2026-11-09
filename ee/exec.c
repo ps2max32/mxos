@@ -219,7 +219,13 @@ void exec_end_range(u32 *lo, u32 *hi) {
 /* the program a parked one started (proc_spawn, proc_wait; kernel version
    14): its process once it runs, and the last one's end */
 static int last_child, last_child_status;
-void exec_park_wait_set(void) { park.waiter = mx_bios_get_thread_id(); }
+/* before a start: its process, or -1, comes in park.child (exec_park_started,
+   exec_park_start_failed); a failed start's -1 is not the next one's */
+void exec_park_wait_set(void) {
+  park.waiter = mx_bios_get_thread_id();
+  if (park.child < 0)
+    park.child = 0;
+}
 void exec_park_wait_clear(void) {
   int was = mx_di();
   if (park.waiter == mx_bios_get_thread_id())
@@ -629,13 +635,16 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   }
   /* a program waiting for this one (step 2c) is given up when this one
      cannot have a run of its own: it takes all memory */
+  int dropped = 0;
   if (!core_off_at && exec_parked()) {
     con_log(CON_YELLOW, "  %s takes all memory: the program that started it ends", path);
     exec_park_drop();
+    dropped = 1;
   }
   /* at its own addresses: the BIOS's mappings, ASID 0 (after a program that
-     waits, the TLB and the ASID are still that one's) */
-  if (!core_off_at && (mx__asid || mx__core_off))
+     waits, the TLB and the ASID are still that one's; one beside kept its
+     core's entries, tlb_core_keep) */
+  if (!core_off_at && (mx__asid || mx__core_off || dropped))
     tlb_restore();
   u32 bytes = 0, text_lo = ~0u, text_hi = 0;
   for (u32 i = 0; i < eh.phnum; i++) {

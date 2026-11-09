@@ -9,6 +9,7 @@
 #include <mx/debug.h>
 #include <mx/hw/formats.h>
 #include <mx/hw/regs.h>
+#include <mx/msg.h>
 #include <mx/sif.h>
 #include <mx/string.h>
 
@@ -272,6 +273,21 @@ static void iop_exception(const u32 *w) {
   con_log(CON_RED, "  ra %08x sp %08x", regs[31], regs[29]);
 }
 
+/* kernel version 20: execee and dumpreg to the host link's service
+   (mxlink's app, <mx/iop.h>'s MX_IOP_CHANNEL_HOST): the packet up to its
+   last string's 0 (ps2client sends what was on its stack after it): 0, or
+   -1 when none takes it (the kernel serves it) */
+static int host_post(const u8 *p, u32 cmd) {
+  u32 words = cmd == PKO_EXECEE_CMD ? be32(p + HDR) : 1, n = HDR + 4;
+  for (u32 w = 0; w < words; w++) {
+    while (n < HDR + 4 + PKO_MAX_PATH && p[n])
+      n++;
+    if (n++ >= HDR + 4 + PKO_MAX_PATH)
+      return -1; /* not ended within its 256 bytes */
+  }
+  return n <= MX_MSG_MAX ? kmsg_host_post(p, n) : -1;
+}
+
 static void cmd_thread(void *arg) {
   (void)arg;
   for (;;) {
@@ -298,6 +314,8 @@ static void cmd_thread(void *arg) {
     pkt_new = 0;
     const u8 *p = pkt + 4;
     u32 cmd = be32(p);
+    if ((cmd == PKO_EXECEE_CMD || cmd == PKO_DUMP_REG) && host_post(p, cmd) == 0)
+      continue;
     switch (cmd) {
     case PKO_RESET_CMD:
       con_log(CON_YELLOW, "reset");

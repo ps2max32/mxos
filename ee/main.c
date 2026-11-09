@@ -52,6 +52,9 @@ static s32 launch_cleanup KEPT = 0; /* the program before it ended */
 /* the next return goes to the text screen, not to the shell: after a host's
    program, and after the shell ended itself (it may crash at each start) */
 static s32 no_shell KEPT = 0;
+/* the service started, not yet one (mx_proc_service); given up when it
+   ended before that, until the next reset: not started again and again */
+static s32 service_try KEPT = 0, service_off KEPT = 0;
 /* the BIOS's threads for the next program: one not built for kernel version
    10, which calls the BIOS's thread and semaphore syscalls itself (exec.c
    restarts mxlink so, and back after it) */
@@ -252,6 +255,7 @@ void mxlink_restart(void) {
   exec_kill();
   iop_last = 0; /* ps2link.irx gave up host: for this reset: never kept */
   no_shell = 0;
+  service_off = 0;
   crash_return = 0;
   restart();
 }
@@ -370,6 +374,7 @@ static int launch(int argc, const char *args, u32 args_len, const char *swap, in
   if (exec_service_caller()) {
     if (beside != 2 || exec_running())
       return -1;
+    no_shell = 1; /* kernel version 20: after it the text screen, as a host's */
     return service_start(argc);
   }
   /* a program with its core at a run of its own and without VM waits for
@@ -421,12 +426,15 @@ int kproc_service(void) {
   if (exec_parked() || mx_bios_get_thread_id() == cmd_thread_id() || exec_park(1) < 0)
     return -1;
   exec_park_service_set();
+  service_try = 0;
   memcpy(parked_path, last_path, sizeof parked_path);
   pads_close();
   int argc = 0;
   launch_len = default_args(launch_args, sizeof launch_args, &argc);
-  if (!argc)
+  if (!argc) {
+    status_state(ST_READY, 0); /* none in front: ready for the host */
     return 0;
+  }
   exec_swap(0);
   int child = service_start(argc);
   return child > 0 ? child : 0;
@@ -435,6 +443,14 @@ int kproc_service(void) {
 /* proc_kill: the program in front ended by another process as if it had
    called mx_exit(status), without the restart (which would end the caller
    too): -1 when that cannot be */
+/* the shell ended by the service (the host link, for the host): its IOP
+   kept and cleaned up, as for the takeover of old, not reset with the
+   modules read again: the card did not answer after it (the shell's
+   drivers, in the middle of a call) */
+static int shell_stopped;
+/* its end prints no test end marker: the host's run is the next program */
+static s32 quiet_end KEPT = 0;
+
 int kproc_kill(int id, int status) {
   if (id <= 0 || id != end_proc_front() || id == ksched_thread_proc(mx_bios_get_thread_id()) ||
       !exec_running() || !exec_on_libmxk() || !exec_resident() || !end_possible() ||
@@ -443,6 +459,12 @@ int kproc_kill(int id, int status) {
   returned = 1;
   returns++;
   last_status = (u32)status & 0xFF;
+  /* kernel version 20: a service (the host link) ended it: the text screen
+     after it, not the shell, until the next reset */
+  if (exec_service_caller()) {
+    no_shell = 1;
+    shell_stopped = exec_in_shell();
+  }
   ending = 1;
   cmd_wake();
   return 0;
@@ -479,18 +501,16 @@ static int card_ready(void) {
   return 0;
 }
 
-/* All modules to memory: with the IOP as it is if that reads the card (the
-   boot loader's, mxlink's), else after a reset with the ROM's drivers. */
-static int read_modules(void) {
-  status_state(ST_BOOT, "IOP modules: reading");
-  if (mx_sif_init() < 0 || !card_ready()) {
-    if (mx_iop_reset("") < 0 || mx_iop_load_module("rom0:SIO2MAN") < 0 ||
-        mx_iop_load_module("rom0:MCMAN") < 0 || mx_iop_load_module("rom0:MCSERV") < 0 ||
-        !card_ready()) {
-      con_log(CON_RED, "no IOP modules: cannot read %s", MODULE_DIR);
-      return -1;
-    }
-  }
+/* the IOP reset, with the ROM's card drivers: 0 when it reads the card */
+static int rom_card(void) {
+  return mx_iop_reset("") < 0 || mx_iop_load_module("rom0:SIO2MAN") < 0 ||
+                 mx_iop_load_module("rom0:MCMAN") < 0 || mx_iop_load_module("rom0:MCSERV") < 0 ||
+                 !card_ready()
+             ? -1
+             : 0;
+}
+
+static int read_all(void) {
   u8 *to = MODULE_MEM;
   for (u32 i = 0; i < NMODULES; i++) {
     int fd = module_open(i), size = fd < 0 ? -1 : mx_fio_lseek(fd, 0, MX_FIO_SEEK_END);
@@ -511,6 +531,24 @@ static int read_modules(void) {
     to += ((u32)size + 63) & ~63u;
   }
   return 0;
+}
+
+/* All modules to memory: with the IOP as it is if that reads the card (the
+   boot loader's, mxlink's), else, or when that fails (a program ended in the
+   middle of a card call: the shell, ended by the host link), after a reset
+   with the ROM's drivers. */
+static int read_modules(void) {
+  status_state(ST_BOOT, "IOP modules: reading");
+  int kept = mx_sif_init() >= 0 && card_ready();
+  if (kept && read_all() == 0)
+    return 0;
+  if (kept)
+    con_log(CON_GREY, "the IOP as it was: reset with the ROM's card drivers");
+  if (rom_card() < 0) {
+    con_log(CON_RED, "no IOP modules: cannot read %s", MODULE_DIR);
+    return -1;
+  }
+  return read_all();
 }
 
 static int load(u32 i, const char *args, u32 args_len) {
@@ -808,6 +846,7 @@ static void emu_main(void) {
     klog_init();
     mx__timer_init();
   }
+  mx__fio_lock_init(); /* every process's threads use the file server */
   /* after the kernel's threads, as in main: a vblank handler the screen
      adds before them is the BIOS's, which the kernel's interrupt entry
      never calls (its hooks, the SIF waits' timeouts, never ran) */
@@ -866,6 +905,7 @@ int main(int argc, char **argv) {
     klog_init();
     mx__timer_init();
   }
+  mx__fio_lock_init(); /* every process's threads use the file server */
   con_init();
   screen();
   status_state(ST_BOOT, "IOP");
@@ -901,10 +941,16 @@ static void after_program(void) {
     con_log(CON_RED, "%s", crash.note);
   /* A run ends here, however the program ended: not every way out prints the
      marker. Before mxlink says it is ready, so that it cannot end the next run. */
-  if (returned && !launch_argc && !exec_park_service())
+  if (returned && !launch_argc && !exec_park_service() && !quiet_end)
     mx_printf("@@PS2TEST_END@@ status=%d\n", (int)last_status);
+  quiet_end = 0;
   int came_back = (int)returned;
   returned = 0;
+  if (service_try && came_back) {
+    con_log(CON_RED, "the service %s ended before it became one: not started again", last_path);
+    service_off = 1;
+  }
+  service_try = 0;
   con_log(CON_GREEN, "mxlink %s ready", MXLINK_VERSION);
   if (launch_argc) {
     int argc = launch_argc;
@@ -914,8 +960,9 @@ static void after_program(void) {
       exec_shell_next();
     launch_shell = 0;
     cmd_launch(argc, launch_args, launch_len);
-  } else if (!exec_parked() && service_there()) {
+  } else if (!exec_parked() && !service_off && service_there()) {
     /* the service, which starts the shell (mx_proc_service) */
+    service_try = 1;
     cmd_launch(service_argc, service_args, service_len);
   } else if (shell_there()) {
     /* it is told what came back: argv[1] the program, argv[2] its status */
@@ -953,8 +1000,13 @@ void program_ended(void) {
   end_cleanup();
   tlb_restore();
   kirq_on();
-  if (!iop_kept() || iop_cleanup_checked() < 0)
+  if (!iop_kept() || iop_cleanup_checked() < 0) {
+    if (shell_stopped)
+      launch_cleanup = 1, quiet_end = 1;
+    shell_stopped = 0;
     restart();
+  }
+  shell_stopped = 0;
   u32 threads_left, semas_left, calls_left;
   end_counts(&threads_left, &semas_left, &calls_left);
   end_reset_state();

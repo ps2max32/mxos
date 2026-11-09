@@ -214,8 +214,16 @@ int end_tables_known(void) { return tables_known; }
 int end_possible(void) { return __prog_data_end != 0 && __prog_bss_end != 0; }
 
 static int calls_left;
+static int fio_holder, fio_held;
+static int fio_gone(int tid) { return fio_held && tid == fio_holder; }
+
 void end_cleanup(void) {
+  /* one of its threads in a file call (the kernel's file server, which
+     every process uses): the lock free again once it is gone */
+  fio_holder = mx__fio_owner();
+  fio_held = fio_holder > 0 && thread_mine(fio_holder);
   threads_off();
+  mx__fio_release(fio_gone);
   /* their calls to the IOP ended, before the next call or semas_off */
   calls_left = mx__sif_calls_finish();
   handlers_off();

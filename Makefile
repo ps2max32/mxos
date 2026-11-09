@@ -7,7 +7,8 @@
 #   make high       build/apps/mxos/mxlink-high.elf (at 0x1E00000: to start
 #                   with ps2client execee from a running ps2link, for tests)
 #   make shell      mxshell (apps/mxshell, MXSHELL=<its directory>) and its
-#                   storage drivers into build/apps/mxos/MXOS, for the card
+#                   storage drivers into build/apps/mxos/MXOS, for the card;
+#                   with mxlink's app (MXLINK-APP.ELF) and SERVICES.CFG
 #   make emu        build/apps/mxos-emu/mxlink.elf:
 #                   the kernel for PCSX2: libmxk programs need one, and it has
 #                   no network there; it starts what host:mxload.txt says
@@ -125,11 +126,15 @@ mxlink-iop:
 	$(MAKE) -C $(MXLINK) OUT=$(OUT)/mxlink
 .PHONY: mxlink-iop
 
-# the shell: mc0:/MXOS/MXSHELL.ELF, and the storage drivers it loads from there
-shell:
+# the shell: mc0:/MXOS/MXSHELL.ELF, and the storage drivers it loads from
+# there; the host link's app, the service the kernel starts at the boot
+# (SERVICES.CFG: kernel version 20)
+shell: mxlink-iop
 	$(MAKE) -C $(MXSHELL) OUT=$(OUT)/mxshell
 	@mkdir -p $(OUT)/MXOS
 	cp $(OUT)/mxshell/MXOS/* $(OUT)/MXOS/
+	cp $(OUT)/mxlink/mxlink-app.elf $(OUT)/MXOS/MXLINK-APP.ELF
+	printf '%sMXLINK-APP.ELF\n' '$(or $(MODULE_DIR),mc0:/MXOS/)' > $(OUT)/MXOS/SERVICES.CFG
 
 mxos-fill: $(OUT)/mxos-fill.elf
 $(OUT)/mxos-fill.elf: tools/mxos-fill.c $(MX_LIB) $(MX_CRT0)

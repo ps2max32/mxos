@@ -45,6 +45,13 @@ What it adds to ps2link:
   makes no sound: maxsdk's mxsnd (booted with libsd) stops the ending
   program's voices and stream and stays running for the next program. The
   module does not stay on the IOP.
+- A service: `mc0:/MXOS/SERVICES.CFG` names a program (a path and its
+  arguments) that starts at the boot and after a restart, before the shell,
+  and stays beside every program in front (kernel version 18). It is the
+  host link's app (`MXLINK-APP.ELF`, from apps/mxlink): from kernel version
+  20 it takes ps2client's `execee` and ping, which the kernel passes on to
+  it; the kernel serves the other commands, and all of them while no service
+  runs.
 - A shell: `mc0:/MXOS/MXSHELL.ELF`, if it is there, is started at boot and
   after each program it started (`mx_loader_launch`). A game built on
   maxsdk for kernel version 9 runs beside it instead: the shell waits in

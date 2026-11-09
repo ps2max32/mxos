@@ -20,6 +20,7 @@
 
 #include <mx/bios.h>
 #include <mx/cpu.h>
+#include <mx/iop.h>
 #include <mx/msg.h>
 #include <mx/string.h>
 
@@ -341,6 +342,18 @@ int kmsg_iop_channel(u32 cid, int port) {
           break;
         }
   }
+  mx_irq_restore(was);
+  return r;
+}
+
+/* kernel version 20, the command thread: a packet of the host link
+   (ps2link.irx's DMA) to the process with the channel MX_IOP_CHANNEL_HOST,
+   if one has it: 0, posted; -1, the kernel serves it */
+int kmsg_host_post(const void *data, u32 len) {
+  int was = mx_di(), r = -1;
+  for (int i = 0; i < NCHANNELS; i++)
+    if (chan[i].used && chan[i].cid == MX_IOP_CHANNEL_HOST)
+      r = post_port(chan[i].port, chan[i].proc, data, len);
   mx_irq_restore(was);
   return r;
 }
