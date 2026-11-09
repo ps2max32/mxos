@@ -211,7 +211,7 @@ void con_log(u32 rgb, const char *fmt, ...) {
   /* the debug output goes through the IOP's file server, which a running
      program has taken over (its SIF receive buffer): only without one */
   if (!exec_running())
-    mx_printf("mxlink: %s\n", buf);
+    mx_printf("mxkernel: %s\n", buf);
   u32 nlog = con_rows - LOG0;
   if (log_n == nlog) {
     for (u32 i = 1; i < nlog; i++) {

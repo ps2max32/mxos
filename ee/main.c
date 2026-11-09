@@ -716,7 +716,7 @@ reset:
    stops, the screen to host:mxlink.tga and the test end marker */
 static void stopped(void) {
 #ifdef MXLINK_SHOT
-  mx_gs_save_tga(0, "host:mxlink.tga");
+  mx_gs_save_tga(0, "host:mxkernel.tga");
   mx_printf("@@PS2TEST_END@@ status=0\n");
 #endif
   for (;;)
@@ -736,14 +736,14 @@ static int shell_there(void) {
 }
 
 static void screen(void) {
-  con_line(ROW_TITLE, CON_WHITE, "mxlink %s", MXLINK_VERSION);
+  con_line(ROW_TITLE, CON_WHITE, "mx kernel %s", MXLINK_VERSION);
   con_text(CON_COLS - 16, ROW_TITLE, CON_GREY, "maxsdk  ps2link");
   const char *ip = if_conf, *mask = ip + strlen(ip) + 1, *gw = mask + strlen(mask) + 1;
   con_line(ROW_NET, CON_WHITE, "Net:    %s  mask %s  gw %s", ip, mask, gw);
   con_line(ROW_HOST, CON_WHITE, "Boot:   %s%s", boot_path, restarts > 1 ? "  (restarted)" : "");
   u32 self_start, self_end;
   exec_self(&self_start, &self_end);
-  con_line(ROW_MEM, CON_WHITE, "Memory: mxlink %05x-%05x, programs 00100000-%08x",
+  con_line(ROW_MEM, CON_WHITE, "Memory: kernel %05x-%05x, programs 00100000-%08x",
            self_start, self_end, mx_bios_get_memory_size());
   con_line(ROW_HELP, CON_GREY, "ps2client -h %s execee host:<elf> [args]", ip);
   if (last_path[0])
@@ -831,7 +831,7 @@ static u32 default_args(char *to, u32 max, int *argc) {
 static void emu_main(void) {
   static char args[256];
   if (returned) {
-    mx_printf("mxlink: %s returned, exit status %d\n", last_path, (int)last_status);
+    mx_printf("mxkernel: %s returned, exit status %d\n", last_path, (int)last_status);
     mx_printf("@@PS2TEST_END@@ status=%d\n", (int)last_status);
     stopped();
   }
@@ -854,14 +854,14 @@ static void emu_main(void) {
   u32 len = 0;
   int words = mx_sif_init() < 0 ? 0 : read_words("host:mxload.txt", args, sizeof args, &len);
   if (!words) {
-    mx_printf("mxlink: no host:mxload.txt\n");
+    mx_printf("mxkernel: no host:mxload.txt\n");
     stopped();
   }
   iop_last = mx_iop_last_module(); /* iop_kept: the IOP as PCSX2 started it */
   /* started by the command thread, as on the PS2: the end without a
      restart, and programs that start others (launch, launch_beside) */
   if (cmd_init() < 0) {
-    mx_printf("mxlink: the command thread did not start\n");
+    mx_printf("mxkernel: the command thread did not start\n");
     stopped();
   }
   /* with a service (host:services.txt), host:mxload.txt's program comes
@@ -951,7 +951,7 @@ static void after_program(void) {
     service_off = 1;
   }
   service_try = 0;
-  con_log(CON_GREEN, "mxlink %s ready", MXLINK_VERSION);
+  con_log(CON_GREEN, "mx kernel %s ready", MXLINK_VERSION);
   if (launch_argc) {
     int argc = launch_argc;
     launch_argc = 0;

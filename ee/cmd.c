@@ -7,7 +7,7 @@
    With the host link's app (mxlink's, a service: kernel version 20, 21) the
    commands go on to it (host_post), the reset and the IOP's exception
    excepted. Without it (no service, a program that took all memory or runs
-   on the BIOS's threads, mxlink-high) the kernel serves only what the host
+   on the BIOS's threads, mxkernel-high) the kernel serves only what the host
    needs to start a program and to see it is up: the reset, execee and
    dumpreg (ps2client's ping); dumpmem, writemem, gsexec and the VU commands
    are the app's only. */
@@ -278,7 +278,7 @@ static void cmd_thread(void *arg) {
     case PKO_STOP_VU:
       /* the host link's app's: the kernel keeps only what
          the host needs to start a program and to know it is up */
-      con_log(CON_RED, "command %08x: only with the host link's app (%s)", cmd, "MXLINK-APP.ELF");
+      con_log(CON_RED, "command %08x: only with the host link's app (%s)", cmd, "MXLINK.ELF");
       break;
     case PKO_IOPEXCEP_CMD:
       iop_exception((const u32 *)p);

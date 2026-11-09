@@ -90,7 +90,7 @@ u32 home_filter(u32 b) {
   /* only for a program whose maxsdk has the menu (it told the mode) */
   if (!mode_known) {
     if (!told_no_mode)
-      mx_printf("mxlink: home button, but the program told no video mode: no menu\n");
+      mx_printf("mxkernel: home button, but the program told no video mode: no menu\n");
     told_no_mode = 1;
     return b;
   }
@@ -98,7 +98,7 @@ u32 home_filter(u32 b) {
     wanted = 1;
     wanted_at = mx_count();
   } else if (mx_count() - wanted_at > GIVE_UP) {
-    mx_printf("mxlink: home button, but no frame boundary within 2 s: no menu\n");
+    mx_printf("mxkernel: home button, but no frame boundary within 2 s: no menu\n");
     quit_now = 1; /* it did not come to a frame boundary */
     return b;
   }
@@ -274,7 +274,7 @@ static u32 menu_buttons(void) {
 int home_run(u32 page, u32 pages) {
   wanted = 0;
   if (page == ~0u || pages < PANEL_PAGES || !mode_known) {
-    mx_printf("mxlink: no home menu (GS page %x, %u pages, mode %s): the home button ends the program\n",
+    mx_printf("mxkernel: no home menu (GS page %x, %u pages, mode %s): the home button ends the program\n",
               page, pages, mode_known ? "known" : "not told");
     quit_now = 1; /* no menu: the home button ends it, as before */
     return 0;
@@ -282,7 +282,7 @@ int home_run(u32 page, u32 pages) {
   if (vbl_sema < 0) {
     int sema = mx_sema_create(0, 1);
     if (sema < 0 || mx__irq_vbon_hook(vblank) < 0) {
-      mx_printf("mxlink: no home menu (no vblank hook): the home button ends the program\n");
+      mx_printf("mxkernel: no home menu (no vblank hook): the home button ends the program\n");
       quit_now = 1; /* no vblanks for the menu: the home button ends it */
       return 0;
     }

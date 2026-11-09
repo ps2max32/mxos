@@ -595,15 +595,15 @@ int exec_elf(int argc, const char *args, u32 args_len) {
         p->vaddr + p->memsz < p->vaddr) {
       con_log(CON_RED, "segment %u at %08x, %u bytes: not in %08x-%08x", i, p->vaddr, p->memsz,
               LOADER_LOW, TOP);
-      return fail(fd, path, "a segment is not where mxlink can load it");
+      return fail(fd, path, "a segment is not where the kernel can load it");
     }
     /* not over mxlink itself (make high: at 0x1E00000, in the programs'
        memory), its stack included: starting mxlink-high.elf from it hung
        the PS2 */
     if (p->vaddr < self_end && p->vaddr + p->memsz > self_start) {
-      con_log(CON_RED, "segment %u at %08x, %u bytes: over mxlink at %08x-%08x", i, p->vaddr,
+      con_log(CON_RED, "segment %u at %08x, %u bytes: over the kernel at %08x-%08x", i, p->vaddr,
               p->memsz, self_start, self_end);
-      return fail(fd, path, "it would overwrite mxlink");
+      return fail(fd, path, "it would overwrite the kernel");
     }
   }
   if (loader && vm)
@@ -620,7 +620,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
      needs, and starts it then */
   if (!loader && (version >= 10) != ksched_active()) {
     mx_fio_close(fd);
-    con_log(CON_GREY, "  %s: mxlink starts again with %s threads", path,
+    con_log(CON_GREY, "  %s: the kernel starts again with %s threads", path,
             version >= 10 ? "the kernel's" : "the BIOS's");
     mxlink_relaunch(version < 10, argc, args, args_len, next_swap);
   }
@@ -689,7 +689,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
        boot loader: ExecPS2 resets the EE kernel (our threads and handlers
        go; memory stays) and starts it with the arguments. mxlink-high
        starts MXLINK.ELF so, for a test before it is installed. */
-    con_log(CON_YELLOW, "  a loader: started by ExecPS2, mxlink ends");
+    con_log(CON_YELLOW, "  a loader: started by ExecPS2, the kernel ends");
     kirq_off();
     mx_debug_flush();
     tlb_writable();
