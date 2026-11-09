@@ -32,8 +32,10 @@ CHIME_IRX   = $(OUT)/iop/chime.irx
 # variable, so the link keeps only what mxlink uses (it has to fit below
 # 1 MiB); the other programs' libmx stays as it is
 MAXSDK_OUT = $(OUT)/maxsdk
-# its maxsdk too: a small debug hold buffer (the kernel never holds)
-export EXTRA_CFLAGS = -Os -ffunction-sections -fdata-sections -DMX_DEBUG_HOLD_BYTES=256
+# its maxsdk too: a small debug hold buffer (the kernel never holds), and
+# mx_sleep_us on timer 1 (timer 0 is the programs': mx_hires)
+export EXTRA_CFLAGS = -Os -ffunction-sections -fdata-sections -DMX_DEBUG_HOLD_BYTES=256 \
+                      -DMX_SLEEP_TIMER=1
 
 include $(PS2MAX)/libs/maxsdk/mk/maxsdk.mk
 
