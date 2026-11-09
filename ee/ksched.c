@@ -58,6 +58,7 @@ volatile int ksched_need;
 static u32 seq;
 static int active;
 static int idle_id;
+static int handler_proc = -1; /* the process of the handler running, -1: none */
 
 int ksched_active(void) { return active; }
 
@@ -589,6 +590,17 @@ static int remove_handler(int line, int n, int id) {
   mx_irq_restore(was);
   return r;
 }
+/* a handler of any process on this INTC cause (line 0) or DMAC channel (1):
+   end.c leaves it enabled at a program's end (step 2e-2: the one beside's,
+   the kernel's) */
+int ksched_line_used(int line, int n) {
+  int was = mx_di(), r = 0;
+  for (int i = 1; i <= NHANDLERS && !r; i++)
+    r = handler[i].fn && handler[i].line == line && handler[i].n == n;
+  mx_irq_restore(was);
+  return r;
+}
+
 static int k_add_intc_handler(int cause, khandler fn, int next, void *arg) {
   return add_handler(0, cause, fn, next, arg);
 }
@@ -650,7 +662,9 @@ u32 ksched_dispatch(int line, u32 epc) {
         if (!handler[i].fn || handler[i].line != line || handler[i].n != n)
           continue;
         int sw = kproc_handler_enter(handler[i].proc);
+        handler_proc = handler[i].proc;
         int r = handler[i].fn(n, handler[i].arg, (void *)(uintptr_t)epc);
+        handler_proc = -1;
         if (sw)
           kproc_handler_leave();
         if (r == -1)
@@ -684,10 +698,26 @@ static int mask_set(int dmac, int n, int on) {
   mx_irq_restore(was);
   return was_on;
 }
+/* A process turns a cause or channel off only when no other process's
+   handler is on it (step 2e-2): a program's irq.c does when its own slot
+   is empty, and the one beside, or the kernel, may still have one there. */
+static int others_on(int line, int n) {
+  int self = handler_proc >= 0 ? handler_proc : cur()->proc;
+  for (int i = 1; i <= NHANDLERS; i++)
+    if (handler[i].fn && handler[i].line == line && handler[i].n == n && handler[i].proc != self)
+      return 1;
+  return 0;
+}
+static int mask_off(int dmac, int n) {
+  int was = mx_di();
+  int r = n >= 0 && others_on(dmac, n) ? mask_set(dmac, n, 1) : mask_set(dmac, n, 0);
+  mx_irq_restore(was);
+  return r;
+}
 static int k_enable_intc(int cause) { return mask_set(0, cause, 1); }
-static int k_disable_intc(int cause) { return mask_set(0, cause, 0); }
+static int k_disable_intc(int cause) { return mask_off(0, cause); }
 static int k_enable_dmac(int ch) { return mask_set(1, ch, 1); }
-static int k_disable_dmac(int ch) { return mask_set(1, ch, 0); }
+static int k_disable_dmac(int ch) { return mask_off(1, ch); }
 
 /* ---- the table maxsdk's calls come to ---------------------------------------- */
 

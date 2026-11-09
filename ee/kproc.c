@@ -49,21 +49,30 @@ static int loaded; /* 1: the side's space, state and VU0 are live */
 static u32 front_asid, front_core_off;
 static struct kvu0 vu_side, vu_front;
 static u32 switches;
+#ifdef MXLINK_EMU
+#define EMU_ASID(a) tlb_emu_asid(a) /* PCSX2's TLB: tlb.c */
+#else
+#define EMU_ASID(a)
+#endif
 
 static void switch_to(int to_side, int vu) {
   if (vu) {
     kvu0_save(loaded ? &vu_side : &vu_front);
     kvu0_load(to_side ? &vu_side : &vu_front);
   }
+  /* the side's copy of the state is read at its own addresses */
   if (to_side) {
     front_asid = mx__asid, front_core_off = mx__core_off;
     mx__asid_set(side.asid);
     mx__core_off = side.core_off;
+    EMU_ASID(side.asid);
     end_state_swap(side.state);
   } else {
+    EMU_ASID(side.asid);
     end_state_swap(side.state);
     mx__asid_set(front_asid);
     mx__core_off = front_core_off;
+    EMU_ASID(front_asid);
   }
   loaded = to_side;
   switches++;
@@ -128,4 +137,5 @@ void kproc_side_end(void) {
   side.on = 0;
   tlb_core_keep(0, 0);
   mx_irq_restore(was);
+
 }

@@ -128,7 +128,7 @@ static void handlers_off(void) {
     if (id <= 0)
       continue;
     mx_bios_remove_intc_handler((int)i, id);
-    if (!mx__irq_slot_used(0, (int)i))
+    if (!mx__irq_slot_used(0, (int)i) && !(ksched_active() && ksched_line_used(0, (int)i)))
       mx_bios_disable_intc((int)i);
   }
   for (u32 i = 0; i < tables.ndmac; i++) {
@@ -137,7 +137,8 @@ static void handlers_off(void) {
       continue;
     mx_bios_remove_dmac_handler((int)i, id);
     /* SIF's channels are the kernel's (its own handlers, not irq.c's) */
-    if (i != MX_DMAC_SIF0 && i != MX_DMAC_SIF1 && i != MX_DMAC_SIF2 && !mx__irq_slot_used(1, (int)i))
+    if (i != MX_DMAC_SIF0 && i != MX_DMAC_SIF1 && i != MX_DMAC_SIF2 && !mx__irq_slot_used(1, (int)i) &&
+        !(ksched_active() && ksched_line_used(1, (int)i)))
       mx_bios_disable_dmac((int)i);
   }
 }

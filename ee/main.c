@@ -277,9 +277,7 @@ void mxlink_return(int status) {
   /* a libmxk program from the resident mxlink: the command thread ends it,
      without the restart (end.c); this thread waits for that. Only one that
      showed the kernel its interrupt handlers (table version 8): an older
-     libmxk's would stay with the BIOS, in the next program's memory.
-     make emu has no command thread: the restart, and emu_main's end marker. */
-#ifndef MXLINK_EMU
+     libmxk's would stay with the BIOS, in the next program's memory. */
   if (exec_on_libmxk() && exec_resident() && end_possible() && end_tables_known() &&
       mx_bios_get_thread_id() != cmd_thread_id()) {
     ending = 1;
@@ -287,7 +285,6 @@ void mxlink_return(int status) {
     for (;;)
       mx_bios_sleep_thread();
   }
-#endif
   restart();
 }
 
@@ -454,7 +451,12 @@ static int iop_kept(void) {
   if (!returned || !iop_last || mx_sif_init() < 0)
     return 0;
   struct mx_iop_module m;
+#ifdef MXLINK_EMU
+  (void)m; /* PCSX2's IOP: no ps2link */
+  return mx_iop_last_module() == iop_last;
+#else
   return mx_iop_last_module() == iop_last && mx_iop_find_module("ps2link", &m) > 0;
+#endif
 }
 
 /* What a program leaves on the IOP when it ends, so the next finds the IOP as
@@ -663,6 +665,7 @@ static void emu_main(void) {
     mx_printf("mxlink: no host:mxload.txt\n");
     stopped();
   }
+  iop_last = mx_iop_last_module(); /* iop_kept: the IOP as PCSX2 started it */
   int words = 0;
   u32 len = 0;
   for (int i = 0; i < n;) {
@@ -675,8 +678,13 @@ static void emu_main(void) {
     args[len++] = 0;
     words++;
   }
-  if (exec_elf(words, args, len) < 0)
+  /* started by the command thread, as on the PS2: the end without a
+     restart, and programs that start others (launch, launch_beside) */
+  if (cmd_init() < 0) {
+    mx_printf("mxlink: the command thread did not start\n");
     stopped();
+  }
+  cmd_launch(words, args, len);
   mx_bios_exit_delete_thread();
 }
 #endif

@@ -82,6 +82,7 @@ int ksched_set_proc(int id, int proc);
 int ksched_thread_proc(int id);
 int ksched_sema_proc(int id);
 void ksched_proc_hold(int proc, int hold);
+int ksched_line_used(int line, int n);
 /* kproc.c: two processes side by side (step 2e-2) */
 void kproc_thread(int proc);
 int kproc_handler_enter(int proc);

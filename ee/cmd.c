@@ -362,6 +362,9 @@ int cmd_init(void) {
   cmd_tid = mx_bios_create_thread(&tp);
   if (cmd_tid < 0 || mx_bios_start_thread(cmd_tid, 0) < 0)
     return -1;
+#ifdef MXLINK_EMU
+  return 0; /* no ps2link on PCSX2's IOP: SIF0's DMA is not its commands */
+#endif
 
   MX_UNCACHED((u32 *)(uintptr_t)CMD_AREA)[0] = 0;
   if (MX_R32(MX_D_STAT) & (1u << MX_DMAC_SIF0))

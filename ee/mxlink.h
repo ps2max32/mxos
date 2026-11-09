@@ -160,6 +160,9 @@ void mxlink_relaunch(int bios, int argc, const char *args, u32 args_len, const c
 void kirq_off(void);
 void kirq_counts(u32 *intc, u32 *dmac);
 int tlb_core_map(u32 va_end, u32 off);
+#ifdef MXLINK_EMU
+void tlb_emu_asid(u32 asid);
+#endif
 void tlb_core_keep(u32 n, u32 va_end);
 /* The BIOS's entry for mxlink's code, for a loader that writes there. */
 void tlb_writable(void);

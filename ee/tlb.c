@@ -62,7 +62,7 @@ static void tlb_read(u32 i, u32 *pm, u32 *hi, u32 *lo0, u32 *lo1) {
   __asm__ volatile("mtc0 %4, $0\n\tsync.p\n\ttlbr\n\tsync.p\n\t"
                    "mfc0 %0, $5\n\tmfc0 %1, $10\n\tmfc0 %2, $2\n\tmfc0 %3, $3\n\t"
                    "mtc0 %5, $10\n\tsync.p"
-                   : "=r"(*pm), "=r"(*hi), "=r"(*lo0), "=r"(*lo1)
+                   : "=&r"(*pm), "=&r"(*hi), "=&r"(*lo0), "=&r"(*lo1)
                    : "r"(i), "r"(mx__asid));
 }
 
@@ -181,3 +181,19 @@ static int over_side(u32 i) {
   u32 page = ((bios_tlb[i].pm >> 13) + 1) << 12, lo = bios_tlb[i].hi & ~0x1FFFu;
   return lo < keep_end && lo + 2 * page > 0x00100000u;
 }
+
+#ifdef MXLINK_EMU
+/* PCSX2 maps an entry when it is written and never looks at its ASID: of two
+   entries at one address, the last written is the one used. At a process
+   switch (kproc.c), the entries of the process that runs next (its ASID, G =
+   0) are written again, so its are the ones used, as on the PS2. */
+void tlb_emu_asid(u32 asid) {
+  for (u32 i = TLB_FIRST; i < TLB_N; i++) {
+    u32 pm, hi, lo0, lo1;
+    tlb_read(i, &pm, &hi, &lo0, &lo1);
+    if ((lo0 & lo1 & 1) || (hi & 0xFFu) != asid || !((lo0 | lo1) & 2))
+      continue;
+    tlb_write(i, pm, hi, lo0, lo1);
+  }
+}
+#endif
