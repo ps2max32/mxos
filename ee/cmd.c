@@ -2,7 +2,15 @@
    gets ps2client's UDP packets and sends each by SIF DMA to EE address
    0xFF800 (CMD_AREA): word 0 the PKO_RPC_* number (not 0, so it tells a
    new packet), the network packet from word 1 (fields big-endian). The
-   SIF0 DMA end interrupt copies it and wakes the command thread. */
+   SIF0 DMA end interrupt copies it and wakes the command thread.
+
+   With the host link's app (mxlink's, a service: kernel version 20, 21) the
+   commands go on to it (host_post), the reset and the IOP's exception
+   excepted. Without it (no service, a program that took all memory or runs
+   on the BIOS's threads, mxlink-high) the kernel serves only what the host
+   needs to start a program and to see it is up: the reset, execee and
+   dumpreg (ps2client's ping); dumpmem, writemem, gsexec and the VU commands
+   are the app's only. */
 
 #include <mx/bios.h>
 #include <mx/cpu.h>
@@ -35,7 +43,6 @@
 #define HDR 6
 
 static u32 be32(const u8 *p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
-static u16 be16(const u8 *p) { return (u16)(p[0] << 8 | p[1]); }
 
 static int cmd_tid;
 static int sif0_id;
@@ -46,7 +53,6 @@ static volatile int pkt_new;
 static volatile int launch_argc;
 static const char *launch_args;
 static u32 launch_len;
-static u8 data_buf[16 * 1024] __attribute__((aligned(64)));
 
 static int sif0_handler(int ch, void *arg, void *addr) {
   (void)ch, (void)arg, (void)addr;
@@ -95,59 +101,6 @@ static int files_ok(const char *what) {
   return 0;
 }
 
-/* dumpmem: offset, size, path */
-static void dump_mem(const u8 *p) {
-  u32 off = be32(p + HDR), size = be32(p + HDR + 4);
-  char path[PKO_MAX_PATH];
-  path_of(path, p + HDR + 8);
-  if (!files_ok("dumpmem"))
-    return;
-  con_log(CON_WHITE, "dumpmem %08x, %u bytes -> %s", off, size, path);
-  int fd = mx_fio_open(path, MX_FIO_WRONLY | MX_FIO_CREAT | MX_FIO_TRUNC);
-  if (fd < 0) {
-    con_log(CON_RED, "  cannot open %s", path);
-    return;
-  }
-  for (u32 done = 0; done < size;) {
-    u32 n = size - done < sizeof data_buf ? size - done : sizeof data_buf;
-    memcpy(data_buf, (const void *)(uintptr_t)(off + done), n);
-    if (mx_fio_write(fd, data_buf, n) < 0) {
-      con_log(CON_RED, "  write failed");
-      break;
-    }
-    done += n;
-  }
-  mx_fio_close(fd);
-}
-
-/* writemem: offset, size, path */
-static void write_mem(const u8 *p) {
-  u32 off = be32(p + HDR), size = be32(p + HDR + 4);
-  char path[PKO_MAX_PATH];
-  path_of(path, p + HDR + 8);
-  if (!files_ok("writemem"))
-    return;
-  con_log(CON_WHITE, "writemem %s -> %08x, %u bytes", path, off, size);
-  int fd = mx_fio_open(path, MX_FIO_RDONLY);
-  if (fd < 0) {
-    con_log(CON_RED, "  cannot open %s", path);
-    return;
-  }
-  for (u32 done = 0; done < size;) {
-    u32 n = size - done < sizeof data_buf ? size - done : sizeof data_buf;
-    int r = mx_fio_read(fd, data_buf, n);
-    if (r <= 0) {
-      con_log(CON_RED, "  read failed");
-      break;
-    }
-    memcpy((void *)(uintptr_t)(off + done), data_buf, (u32)r);
-    done += (u32)r;
-  }
-  mx_fio_close(fd);
-  mx_bios_flush_cache(0);
-  mx_bios_flush_cache(2);
-}
-
 /* dumpreg: the register sets of ps2link */
 static const u32 dma_regs[] = {
     0x1000e000, 0x1000e010, 0x1000e020, 0x1000e030, 0x1000e040, 0x1000e050, 0x1000e060,
@@ -192,10 +145,11 @@ static void dump_reg(const u8 *p) {
   path_of(path, p + HDR + 4);
   if (!files_ok("dumpreg"))
     return;
-  u32 *w = (u32 *)data_buf, n = 0;
+  static u32 w[160] __attribute__((aligned(64)));
+  u32 n = 0;
   for (u32 s = 0; s < 10; s++)
     if (which == s || which == 10)
-      for (u32 i = 0; i < reg_sets[s].n; i++)
+      for (u32 i = 0; i < reg_sets[s].n && n < sizeof w / 4; i++)
         w[n++] = MX_R32(reg_sets[s].r[i]);
   if (!n) {
     /* REGVU0, REGVU1: not yet */
@@ -210,46 +164,6 @@ static void dump_reg(const u8 *p) {
   }
   mx_fio_write(fd, w, n * 4);
   mx_fio_close(fd);
-}
-
-/* gsexec: size, path: up to 128 bytes of GIF packet sent by PATH3 */
-static void gs_exec(const u8 *p) {
-  u32 size = be16(p + HDR);
-  char path[PKO_MAX_PATH];
-  path_of(path, p + HDR + 2);
-  if (!files_ok("gsexec"))
-    return;
-  int fd = mx_fio_open(path, MX_FIO_RDONLY);
-  if (fd < 0) {
-    con_log(CON_RED, "gsexec: cannot open %s", path);
-    return;
-  }
-  int n = mx_fio_read(fd, data_buf, 128);
-  mx_fio_close(fd);
-  if (n < 0)
-    return;
-  con_log(CON_WHITE, "gsexec %s, %u bytes", path, size);
-  mx_dcache_writeback(data_buf, 128);
-  MX_R32(MX_DMA_GIF_QWC) = size / 16;
-  MX_R32(MX_DMA_GIF_MADR) = (u32)(uintptr_t)data_buf;
-  MX_R32(MX_DMA_GIF_CHCR) = 0x101;
-  while (MX_R32(MX_DMA_GIF_CHCR) & 0x100)
-    ;
-}
-
-/* ctc2 $8, vi28 (FBRST) as a word: the assembler takes it only with -mvu0 */
-static void fbrst(u32 v) {
-  __asm__ volatile("move $8, %0\n\t.word 0x48c8e000\n\tsync.p" : : "r"(v) : "$8", "memory");
-}
-
-static void vu(const u8 *p, int start) {
-  u32 vpu = be32(p + HDR);
-  if (vpu > 1)
-    return;
-  con_log(CON_WHITE, "%s VU%u", start ? "startvu" : "stopvu", vpu);
-  /* stop: force break, VIF force break; start: reset, VIF STC */
-  fbrst((start ? 2u : 1u) << (vpu * 8));
-  MX_R32(vpu ? 0x10003C10u : 0x10003810u) = start ? 8 : 2;
 }
 
 static const char *const iop_codes[16] = {
@@ -354,21 +268,17 @@ static void cmd_thread(void *arg) {
     case PKO_SCRDUMP_CMD:
     case PKO_NETDUMP_CMD:
       break; /* where exceptions are reported: the screen and the host, both */
-    case PKO_DUMP_MEM:
-      dump_mem(p);
-      break;
-    case PKO_WRITE_MEM:
-      write_mem(p);
-      break;
     case PKO_DUMP_REG:
       dump_reg(p);
       break;
+    case PKO_DUMP_MEM:
+    case PKO_WRITE_MEM:
     case PKO_GSEXEC_CMD:
-      gs_exec(p);
-      break;
     case PKO_START_VU:
     case PKO_STOP_VU:
-      vu(p, cmd == PKO_START_VU);
+      /* the host link's app's: the kernel keeps only what
+         the host needs to start a program and to know it is up */
+      con_log(CON_RED, "command %08x: only with the host link's app (%s)", cmd, "MXLINK-APP.ELF");
       break;
     case PKO_IOPEXCEP_CMD:
       iop_exception((const u32 *)p);
