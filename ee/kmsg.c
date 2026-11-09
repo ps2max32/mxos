@@ -55,6 +55,11 @@ static struct {
   u8 proc, port;
 } evport[NEVENTS];
 
+#define NCHANNELS 4
+static struct {
+  u8 used, cid, proc, port;
+} chan[NCHANNELS];
+
 static u32 seq;
 
 struct sema_param {
@@ -73,6 +78,7 @@ void kmsg_init(void) {
   memset(ports, 0, sizeof ports);
   memset(slots, 0, sizeof slots);
   memset(evport, 0, sizeof evport);
+  memset(chan, 0, sizeof chan);
   free_sema = sema_new(MX_MSG_SLOTS, MX_MSG_SLOTS);
   for (int i = 0; i < MX_MSG_SLOTS; i++)
     slots[i].sema = (s16)sema_new(0, 1);
@@ -273,17 +279,13 @@ int kmsg_events(int port) {
   return r;
 }
 
-/* An event to proc's event port, if it has one: in a kernel thread (the
-   command thread), without waiting: a full queue drops it (-1). */
-int kmsg_post(int proc, const void *data, u32 len) {
-  if (free_sema < 0 || proc <= 0 || len > MX_MSG_MAX)
-    return -1;
-  int was = mx_di(), port = 0;
-  for (int i = 0; i < NEVENTS; i++)
-    if (evport[i].proc == proc)
-      port = evport[i].port;
+/* interrupts off: a message without a sender to port, if it is proc's,
+   without waiting: a full queue drops it (-1) */
+static int post_port(int port, int proc, const void *data, u32 len) {
   struct kport *p = port_of(port);
   struct kslot *s = 0;
+  if (free_sema < 0 || len > MX_MSG_MAX)
+    return -1;
   if (p && p->proc == proc && mx_bios_ipoll_sema(free_sema) >= 0)
     for (int k = 0; k < MX_MSG_SLOTS && !s; k++)
       if (slots[k].state == S_FREE)
@@ -295,8 +297,63 @@ int kmsg_post(int proc, const void *data, u32 len) {
     s->seq = ++seq, s->state = S_QUEUED;
     mx_bios_isignal_sema(p->sema);
   }
-  mx_irq_restore(was);
   return s ? 0 : -1;
+}
+
+/* An event to proc's event port, if it has one, from a kernel thread (the
+   command thread) or an interrupt, without waiting. */
+int kmsg_post(int proc, const void *data, u32 len) {
+  if (proc <= 0)
+    return -1;
+  int was = mx_di(), port = 0;
+  for (int i = 0; i < NEVENTS; i++)
+    if (evport[i].proc == proc)
+      port = evport[i].port;
+  int r = post_port(port, proc, data, len);
+  mx_irq_restore(was);
+  return r;
+}
+
+/* ---- IOP channels (kernel version 17) ------------------------------------- */
+
+int kmsg_iop_channel(u32 cid, int port) {
+  int proc = self_proc(), r = -1;
+  if (cid >= 32 || proc <= 0)
+    return -1;
+  int was = mx_di();
+  struct kport *p = port_of(port);
+  int i = 0;
+  while (i < NCHANNELS && !(chan[i].used && chan[i].cid == cid))
+    i++;
+  if (!port) {
+    if (i < NCHANNELS && chan[i].proc == proc)
+      chan[i].used = 0, r = 0;
+  } else if (p && p->proc == proc) {
+    if (i < NCHANNELS) {
+      if (chan[i].proc == proc)
+        chan[i].port = (u8)port, r = 0; /* another port of its own */
+    } else
+      for (i = 0; i < NCHANNELS; i++)
+        if (!chan[i].used) {
+          chan[i].used = 1, chan[i].cid = (u8)cid, chan[i].proc = (u8)proc;
+          chan[i].port = (u8)port;
+          r = 0;
+          break;
+        }
+  }
+  mx_irq_restore(was);
+  return r;
+}
+
+/* maxsdk's SIF0 handler (src/base/sif.c), in the interrupt: a command of an
+   IOP module to a channel, its payload a message to the channel's port */
+void mx__sif_cmd(u32 cid, const u32 *pkt, u32 bytes) {
+  for (int i = 0; i < NCHANNELS; i++)
+    if (chan[i].used && chan[i].cid == cid) {
+      u32 psize = pkt[0] & 0xFF, n = (psize < bytes ? psize : bytes);
+      post_port(chan[i].port, chan[i].proc, pkt + 4, n > 16 ? n - 16 : 0);
+      return;
+    }
 }
 
 int kmsg_reply(int msg, const void *reply, u32 len) {
@@ -336,6 +393,9 @@ void kmsg_proc_end(int proc) {
   for (int i = 0; i < NEVENTS; i++)
     if (evport[i].proc == proc)
       evport[i].proc = 0;
+  for (int i = 0; i < NCHANNELS; i++)
+    if (chan[i].used && chan[i].proc == proc)
+      chan[i].used = 0;
   for (int i = 0; i < NPORTS; i++)
     if (ports[i].used && ports[i].proc == proc)
       port_gone(i, 1);

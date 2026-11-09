@@ -495,6 +495,7 @@ static const struct mxk_services kernel = {
     .sleep_us = mx_sleep_us,
     .proc_events = kmsg_events,
     .log_read = klog_read,
+    .iop_channel = kmsg_iop_channel,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {
