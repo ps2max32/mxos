@@ -289,7 +289,8 @@ static void cmd_thread(void *arg) {
           exec_unpark(-1); /* the program that started it goes on */
         else
           status_state(ST_READY, 0);
-      }
+      } else if (exec_parked())
+        exec_park_started();
       continue;
     }
     pkt_new = 0;

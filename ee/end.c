@@ -229,6 +229,9 @@ void end_cleanup(void) {
   end_kernel_clients();
   mx__sif_program_end();
   units_off();
+  /* the kernel's mx_sleep_us: the slots of its threads free, timer 0 set
+     again for the others' (units_off stopped it) */
+  mx__sleep_reap();
   /* The data cache still holds the program's dirty lines: written back
      later (evicted, or the flush after the next load), they would land over
      what the next program's load brought in by DMA (a game in VM, then the

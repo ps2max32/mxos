@@ -17,6 +17,7 @@
 #include <mx/proc.h>
 #include <mx/sif.h>
 #include <mx/string.h>
+#include <mx/thread.h>
 #include <mx/vm.h>
 
 #include "ksched.h"
@@ -191,6 +192,8 @@ static int core_place(u32 end, u32 heap) {
    added again, and its call returns the other's exit status. */
 static struct {
   int on, done, status, tid, shell, beside;
+  int waiter; /* a thread waiting for its end or its start (0: none) */
+  int child;  /* the process of the program it started, once it runs */
   u32 asid, core_off, core_end, core_phys, frames_hi, core_slots;
   struct mx_loader_args largs;
   u8 *state; /* the kernel's state of it, in its core heap */
@@ -203,6 +206,45 @@ static u32 mem_top(void) {
   return park.on ? park.core_phys : mx_bios_get_memory_size() & ~(MIB - 1);
 }
 int exec_parked(void) { return park.on; }
+
+/* the program a parked one started (proc_spawn, proc_wait; kernel version
+   14): its process once it runs, and the last one's end */
+static int last_child, last_child_status;
+void exec_park_wait_set(void) { park.waiter = mx_bios_get_thread_id(); }
+void exec_park_wait_clear(void) {
+  int was = mx_di();
+  if (park.waiter == mx_bios_get_thread_id())
+    park.waiter = 0;
+  mx_irq_restore(was);
+}
+int exec_park_child(void) { return park.on ? park.child : 0; }
+/* the command thread, the program started */
+void exec_park_started(void) {
+  park.child = end_proc_front();
+  if (park.waiter)
+    mx_bios_wakeup_thread(park.waiter);
+}
+/* 1: ended, its status in *status; 0: it runs (nohang); -1: not a program
+   this one started */
+int kproc_wait(int id, int *status, int nohang) {
+  if (id <= 0)
+    return -1;
+  if (park.on && park.child == id) {
+    if (nohang)
+      return 0;
+    int was = mx_di();
+    park.waiter = mx_bios_get_thread_id();
+    mx_irq_restore(was);
+    while (park.on && park.child == id)
+      mx_bios_sleep_thread();
+  }
+  if (!park.on && last_child == id) {
+    if (status)
+      *status = last_child_status;
+    return 1;
+  }
+  return -1;
+}
 
 /* <mx/proc.h>'s list (kernel version 13): the program in front and the one
    that waits for it or runs beside it */
@@ -259,7 +301,7 @@ int exec_park(int beside) {
   park.core_phys = core_phys, park.frames_hi = frames_hi, park.core_slots = core_slots;
   park.largs = largs;
   end_state_save(park.state);
-  park.done = 0;
+  park.done = 0, park.waiter = 0, park.child = 0;
   park.on = 1;
   /* the next program starts with the kernel's state as linked; beside, it
      goes on with its own part of it (kproc_side_begin) */
@@ -288,6 +330,7 @@ void exec_unpark(int status) {
   end_state_load(park.state);
   mx__pad_forget(); /* its ports were closed: its next mx_pad_init opens them */
   user_tid = park.tid, shell = park.shell, on_libmxk = 1, core_moved = 1;
+  core_vm = 0; /* it has none (exec_park): the other's may have had */
   core_end = park.core_end, core_phys = park.core_phys, frames_hi = park.frames_hi;
   largs = park.largs;
   if (!park.beside)
@@ -297,9 +340,11 @@ void exec_unpark(int status) {
   park.on = 0;
   park.status = status;
   park.done = 1;
+  last_child = park.child, last_child_status = status;
   if (side)
     ksched_proc_hold(side, 0);
-  mx_bios_wakeup_thread(park.tid);
+  if (park.waiter)
+    mx_bios_wakeup_thread(park.waiter);
 }
 
 /* a program ended: what was kept in its heap is gone with it */
@@ -433,6 +478,10 @@ static const struct mxk_services kernel = {
     .msg_send = kmsg_send,
     .msg_receive = kmsg_receive,
     .msg_reply = kmsg_reply,
+    .proc_spawn = kproc_spawn,
+    .proc_wait = kproc_wait,
+    .proc_kill = kproc_kill,
+    .sleep_us = mx_sleep_us,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {

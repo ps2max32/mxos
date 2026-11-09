@@ -348,11 +348,21 @@ static int launch(int argc, const char *args, u32 args_len, const char *swap, in
   launch_len = args_len;
   /* a program with its core at a run of its own and without VM waits for
      the other, in its own thread (not the command thread's takeover) */
-  if (mx_bios_get_thread_id() != cmd_thread_id() && exec_park(beside) == 0) {
+  if (mx_bios_get_thread_id() != cmd_thread_id() && exec_park(beside != 0) == 0) {
     memcpy(parked_path, last_path, sizeof parked_path);
     pads_close();
     exec_swap(launch_swap[0] ? launch_swap : 0);
+    exec_park_wait_set();
     cmd_launch(argc, launch_args, launch_len);
+    if (beside == 2) {
+      /* spawn: back once it runs, with its process; -1 if it did not start
+         (exec_unpark(-1): this one is in front again) */
+      int child;
+      while (!(child = exec_park_child()) && !exec_park_done())
+        mx_bios_sleep_thread();
+      exec_park_wait_clear(); /* its end wakes only whoever waits for it */
+      return child && !exec_park_done() ? child : -1;
+    }
     while (!exec_park_done())
       mx_bios_sleep_thread();
     return exec_park_status();
@@ -370,6 +380,27 @@ int mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
 /* step 2e-2: the caller's other threads go on beside the other (kproc.c) */
 int mxlink_launch_beside(int argc, const char *args, u32 args_len, const char *swap) {
   return launch(argc, args, args_len, swap, 1);
+}
+/* step 2e-3 (kernel version 14): as launch_beside, the caller back at once
+   with the other's process */
+int kproc_spawn(int argc, const char *args, u32 args_len, const char *swap) {
+  return launch(argc, args, args_len, swap, 2);
+}
+
+/* proc_kill: the program in front ended by another process as if it had
+   called mx_exit(status), without the restart (which would end the caller
+   too): -1 when that cannot be */
+int kproc_kill(int id, int status) {
+  if (id <= 0 || id != end_proc_front() || id == ksched_thread_proc(mx_bios_get_thread_id()) ||
+      !exec_running() || !exec_on_libmxk() || !exec_resident() || !end_possible() ||
+      !end_tables_known() || ending)
+    return -1;
+  returned = 1;
+  returns++;
+  last_status = (u32)status & 0xFF;
+  ending = 1;
+  cmd_wake();
+  return 0;
 }
 
 void mxlink_takeover(int argc, const char *args, u32 args_len) {
@@ -659,6 +690,7 @@ static void emu_main(void) {
     kirq_on();
     ksched_init();
     kmsg_init();
+    mx__sleep_init();
   }
   int fd = mx_sif_init() < 0 ? -1 : mx_fio_open("host:mxload.txt", MX_FIO_RDONLY);
   int n = fd < 0 ? -1 : mx_fio_read(fd, args, sizeof args - 1);
@@ -717,6 +749,7 @@ int main(int argc, char **argv) {
     kirq_on();
     ksched_init();
     kmsg_init();
+    mx__sleep_init();
   }
   con_init();
   screen();
