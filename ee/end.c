@@ -76,6 +76,10 @@ static struct {
   int drop; /* given up: the next snapshot is its, so its end takes it too */
 } parked;
 
+/* the process of the program in front, and of one that waits (0: none) */
+int end_proc_front(void) { return proc_now; }
+int end_proc_parked(void) { return parked.proc; }
+
 void end_snapshot(int proc) {
   tables_known = 0;
   proc_now = proc, proc_dropped = 0;
@@ -217,6 +221,9 @@ void end_cleanup(void) {
   handlers_off();
   mx__vm_unhook();
   home_unhook();
+  /* its ports and messages, before its semaphores go (kmsg.c) */
+  kmsg_proc_end(proc_now);
+  kmsg_proc_end(proc_dropped);
   semas_off();
   /* the clients of a deleted semaphore told, before an id comes back */
   end_kernel_clients();

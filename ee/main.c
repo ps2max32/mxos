@@ -315,6 +315,8 @@ int mxlink_crash(struct mx_crash *c) {
 
 /* the path of a program that waits for one it started (step 2c) */
 static char parked_path[sizeof last_path];
+/* its path (kproc_list) */
+const char *parked_program(void) { return parked_path; }
 
 /* exec_elf: the program needs the other kind of threads (the kernel's or
    the BIOS's): mxlink starts again in that mode and starts it then */
@@ -656,6 +658,7 @@ static void emu_main(void) {
   if (!bios_mode) {
     kirq_on();
     ksched_init();
+    kmsg_init();
   }
   int fd = mx_sif_init() < 0 ? -1 : mx_fio_open("host:mxload.txt", MX_FIO_RDONLY);
   int n = fd < 0 ? -1 : mx_fio_read(fd, args, sizeof args - 1);
@@ -713,6 +716,7 @@ int main(int argc, char **argv) {
   if (!bios_mode) {
     kirq_on();
     ksched_init();
+    kmsg_init();
   }
   con_init();
   screen();

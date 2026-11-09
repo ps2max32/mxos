@@ -14,6 +14,7 @@
 #include <mx/iop.h>
 #include <mx/kernel.h>
 #include <mx/loader.h>
+#include <mx/proc.h>
 #include <mx/sif.h>
 #include <mx/string.h>
 #include <mx/vm.h>
@@ -202,6 +203,44 @@ static u32 mem_top(void) {
   return park.on ? park.core_phys : mx_bios_get_memory_size() & ~(MIB - 1);
 }
 int exec_parked(void) { return park.on; }
+
+/* <mx/proc.h>'s list (kernel version 13): the program in front and the one
+   that waits for it or runs beside it */
+static void proc_name(char *to, const char *path) {
+  u32 n = (u32)strlen(path), max = sizeof((struct mx_proc_info *)0)->name - 1;
+  if (n > max)
+    path += n - max, n = max; /* its end: the file's name */
+  memcpy(to, path, n);
+  to[n] = 0;
+}
+int kproc_list(struct mx_proc_info *p, int max) {
+  int n = 0;
+  int front = end_proc_front();
+  if (user_tid && front > 0) {
+    if (n < max) {
+      struct mx_proc_info *i = &p[n];
+      memset(i, 0, sizeof *i);
+      i->id = (u8)front, i->state = MX_PROC_FRONT;
+      if (core_moved)
+        i->core_lo = core_phys, i->core_hi = core_phys + (core_end - LOW);
+      proc_name(i->name, status_program());
+    }
+    n++;
+  }
+  int parked = end_proc_parked();
+  if (park.on && parked > 0) {
+    if (n < max) {
+      struct mx_proc_info *i = &p[n];
+      memset(i, 0, sizeof *i);
+      i->id = (u8)parked, i->state = park.beside ? MX_PROC_BESIDE : MX_PROC_WAITING;
+      i->core_lo = park.core_phys, i->core_hi = park.core_phys + (park.core_end - LOW);
+      proc_name(i->name, parked_program());
+    }
+    n++;
+  }
+  return n;
+}
+int kproc_self(void) { return ksched_thread_proc(mx_bios_get_thread_id()); }
 int exec_park_done(void) { return park.done; }
 int exec_park_status(void) { return park.status; }
 
@@ -386,6 +425,14 @@ static const struct mxk_services kernel = {
     .kthreads = &ksched_kthreads,
     .pad_rumble = pad_rumble,
     .launch_beside = mxlink_launch_beside,
+    .proc_self = kproc_self,
+    .proc_list = kproc_list,
+    .port_create = kmsg_port_create,
+    .port_find = kmsg_port_find,
+    .port_delete = kmsg_port_delete,
+    .msg_send = kmsg_send,
+    .msg_receive = kmsg_receive,
+    .msg_reply = kmsg_reply,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {

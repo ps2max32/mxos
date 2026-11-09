@@ -209,4 +209,21 @@ const char *const *exec_note(void);
 /* The crash of the last program: 1, or 0 if it did not crash. */
 int mxlink_crash(struct mx_crash *c);
 
+/* processes and messages (kernel version 13; kmsg.c, exec.c) */
+struct mx_proc_info;
+struct mx_msg;
+int end_proc_front(void);
+int end_proc_parked(void);
+const char *parked_program(void);
+int kproc_list(struct mx_proc_info *p, int max);
+int kproc_self(void);
+void kmsg_init(void);
+void kmsg_proc_end(int proc);
+int kmsg_port_create(const char *name);
+int kmsg_port_find(const char *name);
+int kmsg_port_delete(int port);
+int kmsg_send(int port, const void *req, u32 len, void *reply, u32 max);
+int kmsg_receive(int port, void *buf, u32 max, struct mx_msg *m);
+int kmsg_reply(int msg, const void *reply, u32 len);
+
 #endif
