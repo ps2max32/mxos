@@ -285,7 +285,9 @@ static void cmd_thread(void *arg) {
       int argc = launch_argc;
       launch_argc = 0;
       if (exec_elf(argc, launch_args, launch_len) < 0) {
-        if (exec_parked())
+        if (exec_park_service())
+          exec_park_start_failed(); /* the service goes on beside none */
+        else if (exec_parked())
           exec_unpark(-1); /* the program that started it goes on */
         else
           status_state(ST_READY, 0);

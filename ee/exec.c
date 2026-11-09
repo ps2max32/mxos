@@ -193,7 +193,9 @@ static int core_place(u32 end, u32 heap) {
 static struct {
   int on, done, status, tid, shell, beside;
   int waiter; /* a thread waiting for its end or its start (0: none) */
-  int child;  /* the process of the program it started, once it runs */
+  int child;  /* the process of the program it started, once it runs; -1:
+                 it did not start (a service's spawn) */
+  int service; /* it stays beside every program in front (proc_service) */
   u32 asid, core_off, core_end, core_phys, frames_hi, core_slots;
   struct mx_loader_args largs;
   u8 *state; /* the kernel's state of it, in its core heap */
@@ -230,6 +232,32 @@ void exec_park_started(void) {
   if (park.waiter)
     mx_bios_wakeup_thread(park.waiter);
 }
+
+/* ---- a service (kernel version 18): it stays beside each program in front -- */
+
+void exec_park_service_set(void) { park.service = 1; }
+int exec_park_service(void) { return park.on && park.service; }
+/* in the service's threads: the one beside is the caller */
+int exec_service_caller(void) {
+  return exec_park_service() && end_proc_parked() == ksched_thread_proc(mx_bios_get_thread_id());
+}
+/* the command thread: the service's program did not start */
+void exec_park_start_failed(void) {
+  park.child = -1;
+  if (park.waiter)
+    mx_bios_wakeup_thread(park.waiter);
+}
+/* the command thread: the program in front ended, the service stays */
+void exec_front_ended(int status) {
+  last_child = park.child, last_child_status = status;
+  if (park.child > 0) {
+    struct mx_event e = {MX_EVENT_END, park.child, status, 0};
+    kmsg_post(end_proc_parked(), &e, sizeof e);
+  }
+  park.child = 0;
+  if (park.waiter)
+    mx_bios_wakeup_thread(park.waiter);
+}
 /* 1: ended, its status in *status; 0: it runs (nohang); -1: not a program
    this one started */
 int kproc_wait(int id, int *status, int nohang) {
@@ -244,7 +272,7 @@ int kproc_wait(int id, int *status, int nohang) {
     while (park.on && park.child == id)
       mx_bios_sleep_thread();
   }
-  if (!park.on && last_child == id) {
+  if ((!park.on || park.service) && last_child == id) {
     if (status)
       *status = last_child_status;
     return 1;
@@ -307,7 +335,7 @@ int exec_park(int beside) {
   park.core_phys = core_phys, park.frames_hi = frames_hi, park.core_slots = core_slots;
   park.largs = largs;
   end_state_save(park.state);
-  park.done = 0, park.waiter = 0, park.child = 0;
+  park.done = 0, park.waiter = 0, park.child = 0, park.service = 0;
   park.on = 1;
   /* the next program starts with the kernel's state as linked; beside, it
      goes on with its own part of it (kproc_side_begin) */
@@ -496,6 +524,7 @@ static const struct mxk_services kernel = {
     .proc_events = kmsg_events,
     .log_read = klog_read,
     .iop_channel = kmsg_iop_channel,
+    .proc_service = kproc_service,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {

@@ -339,6 +339,22 @@ void mxlink_relaunch(int bios, int argc, const char *args, u32 args_len, const c
   restart();
 }
 
+/* in a service's thread: the program in launch_args started in front by the
+   command thread, waited for: its process, -1 if it did not start */
+static int service_start(int argc) {
+  exec_park_wait_set();
+  cmd_launch(argc, launch_args, launch_len);
+  int child;
+  while (!(child = exec_park_child()))
+    mx_bios_sleep_thread();
+  exec_park_wait_clear();
+  return child;
+}
+
+/* the program in front when a service has none of its own: the shell, or on
+   PCSX2 host:mxload.txt's; 0: none */
+static u32 default_args(char *to, u32 max, int *argc);
+
 static int launch(int argc, const char *args, u32 args_len, const char *swap, int beside) {
   u32 n = swap ? strlen(swap) : 0;
   if (n >= sizeof launch_swap)
@@ -349,6 +365,13 @@ static int launch(int argc, const char *args, u32 args_len, const char *swap, in
     args_len = sizeof launch_args;
   memcpy(launch_args, args, args_len);
   launch_len = args_len;
+  /* a service beside (kernel version 18): its spawn starts the program in
+     front when none runs, and it stays beside */
+  if (exec_service_caller()) {
+    if (beside != 2 || exec_running())
+      return -1;
+    return service_start(argc);
+  }
   /* a program with its core at a run of its own and without VM waits for
      the other, in its own thread (not the command thread's takeover) */
   if (mx_bios_get_thread_id() != cmd_thread_id() && exec_park(beside != 0) == 0) {
@@ -388,6 +411,25 @@ int mxlink_launch_beside(int argc, const char *args, u32 args_len, const char *s
    with the other's process */
 int kproc_spawn(int argc, const char *args, u32 args_len, const char *swap) {
   return launch(argc, args, args_len, swap, 2);
+}
+
+/* proc_service (kernel version 18): the caller, a program with its core at a
+   run of its own and without VM, stays beside every program in front from
+   now on; the program in front that would have come next (the shell) starts
+   now. 0 (its process when one started), -1 when it cannot. */
+int kproc_service(void) {
+  if (exec_parked() || mx_bios_get_thread_id() == cmd_thread_id() || exec_park(1) < 0)
+    return -1;
+  exec_park_service_set();
+  memcpy(parked_path, last_path, sizeof parked_path);
+  pads_close();
+  int argc = 0;
+  launch_len = default_args(launch_args, sizeof launch_args, &argc);
+  if (!argc)
+    return 0;
+  exec_swap(0);
+  int child = service_start(argc);
+  return child > 0 ? child : 0;
 }
 
 /* proc_kill: the program in front ended by another process as if it had
@@ -674,6 +716,77 @@ static void screen(void) {
              crash.epc, crash.badvaddr, crash.ra);
 }
 
+/* a file of words (a path and its arguments): its words one after the
+   other, each with its 0, in to; their number (0: none, or no file) */
+static int read_words(const char *path, char *to, u32 max, u32 *len) {
+  int fd = mx_fio_open(path, MX_FIO_RDONLY);
+  int n = fd < 0 ? -1 : mx_fio_read(fd, to, max - 1);
+  if (fd >= 0)
+    mx_fio_close(fd);
+  int words = 0;
+  u32 l = 0;
+  for (int i = 0; i < n;) {
+    while (i < n && to[i] <= ' ')
+      i++;
+    if (i == n)
+      break;
+    while (i < n && to[i] > ' ')
+      to[l++] = to[i++];
+    to[l++] = 0;
+    words++;
+  }
+  *len = l;
+  return words;
+}
+
+/* the service started at the boot (kernel version 18): mc0:/MXOS/SERVICES.CFG
+   (on PCSX2 host:services.txt), a path and its arguments; it calls
+   mx_proc_service, and the program in front that comes next starts */
+#ifdef MXLINK_EMU
+#define SERVICES_PATH "host:services.txt"
+#else
+#define SERVICES_PATH MODULE_DIR "SERVICES.CFG"
+#endif
+static char service_args[256];
+static u32 service_len;
+static int service_argc = -1; /* -1: not read yet */
+static int service_there(void) {
+  if (service_argc < 0) {
+    service_argc = 0;
+#ifndef MXLINK_EMU
+    if (!exec_resident() || !card_ready())
+      return 0;
+#endif
+    service_argc = read_words(SERVICES_PATH, service_args, sizeof service_args, &service_len);
+  }
+  return service_argc > 0;
+}
+
+#ifdef MXLINK_EMU
+static char emu_args[256];
+static u32 emu_len;
+static int emu_argc;
+#endif
+
+static u32 default_args(char *to, u32 max, int *argc) {
+#ifdef MXLINK_EMU
+  if (emu_len <= max && emu_argc) {
+    memcpy(to, emu_args, emu_len);
+    *argc = emu_argc;
+    return emu_len;
+  }
+#else
+  if (shell_there() && sizeof SHELL_PATH <= max) {
+    memcpy(to, SHELL_PATH, sizeof SHELL_PATH);
+    exec_shell_next();
+    *argc = 1;
+    return sizeof SHELL_PATH;
+  }
+#endif
+  *argc = 0;
+  return 0;
+}
+
 #ifdef MXLINK_EMU
 /* The IOP as PCSX2 starts it, and the program from host:mxload.txt: its path
    and arguments, in words. The program's end marker ends the run. */
@@ -696,32 +809,26 @@ static void emu_main(void) {
     klog_init();
     mx__sleep_init();
   }
-  int fd = mx_sif_init() < 0 ? -1 : mx_fio_open("host:mxload.txt", MX_FIO_RDONLY);
-  int n = fd < 0 ? -1 : mx_fio_read(fd, args, sizeof args - 1);
-  if (fd >= 0)
-    mx_fio_close(fd);
-  if (n <= 0) {
+  u32 len = 0;
+  int words = mx_sif_init() < 0 ? 0 : read_words("host:mxload.txt", args, sizeof args, &len);
+  if (!words) {
     mx_printf("mxlink: no host:mxload.txt\n");
     stopped();
   }
   iop_last = mx_iop_last_module(); /* iop_kept: the IOP as PCSX2 started it */
-  int words = 0;
-  u32 len = 0;
-  for (int i = 0; i < n;) {
-    while (i < n && args[i] <= ' ')
-      i++;
-    if (i == n)
-      break;
-    while (i < n && args[i] > ' ')
-      args[len++] = args[i++];
-    args[len++] = 0;
-    words++;
-  }
   /* started by the command thread, as on the PS2: the end without a
      restart, and programs that start others (launch, launch_beside) */
   if (cmd_init() < 0) {
     mx_printf("mxlink: the command thread did not start\n");
     stopped();
+  }
+  /* with a service (host:services.txt), host:mxload.txt's program comes
+     after it, in front (mx_proc_service) */
+  if (service_there()) {
+    memcpy(emu_args, args, len);
+    emu_len = len, emu_argc = words;
+    cmd_launch(service_argc, service_args, service_len);
+    mx_bios_exit_delete_thread();
   }
   cmd_launch(words, args, len);
   mx_bios_exit_delete_thread();
@@ -791,7 +898,7 @@ static void after_program(void) {
     con_log(CON_RED, "%s", crash.note);
   /* A run ends here, however the program ended: not every way out prints the
      marker. Before mxlink says it is ready, so that it cannot end the next run. */
-  if (returned && !launch_argc)
+  if (returned && !launch_argc && !exec_park_service())
     mx_printf("@@PS2TEST_END@@ status=%d\n", (int)last_status);
   int came_back = (int)returned;
   returned = 0;
@@ -804,6 +911,9 @@ static void after_program(void) {
       exec_shell_next();
     launch_shell = 0;
     cmd_launch(argc, launch_args, launch_len);
+  } else if (!exec_parked() && service_there()) {
+    /* the service, which starts the shell (mx_proc_service) */
+    cmd_launch(service_argc, service_args, service_len);
   } else if (shell_there()) {
     /* it is told what came back: argv[1] the program, argv[2] its status */
     static char args[256];
@@ -857,6 +967,14 @@ void program_ended(void) {
   if (threads_left || semas_left || calls_left)
     con_log(CON_RED, "the end left %u threads, %u semaphores, %u IOP calls, %u RPC packets",
             threads_left, semas_left, calls_left & 0xFF, calls_left >> 8);
+  if (exec_park_service()) {
+    /* a service beside: it stays, and is told (kernel version 18) */
+    exec_front_ended((int)last_status);
+    after_program();
+    mx_debug_flush();
+    mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
+    return;
+  }
   if (exec_parked()) {
     /* the program that started it goes on (step 2c) */
     con_log(last_status ? CON_RED : CON_GREEN, "%s returned, exit status %d: back to %s", last_path,
