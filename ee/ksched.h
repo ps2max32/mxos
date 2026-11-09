@@ -81,5 +81,10 @@ int ksched_proc_new(void);
 int ksched_set_proc(int id, int proc);
 int ksched_thread_proc(int id);
 int ksched_sema_proc(int id);
+void ksched_proc_hold(int proc, int hold);
+/* kproc.c: two processes side by side (step 2e-2) */
+void kproc_thread(int proc);
+int kproc_handler_enter(int proc);
+void kproc_handler_leave(void);
 #endif
 #endif

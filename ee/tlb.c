@@ -96,6 +96,17 @@ void tlb_writable(void) {
    entries matching one address are undefined), parked above the BIOS's
    unused ones, then written. Those that are right stay, so the code running
    here stays mapped. */
+#define TLB_CORE 14
+#define TLB_CORE_N 8
+/* the core slots of a process beside the one in front (step 2e-2, kproc.c):
+   kept by tlb_restore, which then leaves out the BIOS's entries over its
+   range [0x10_0000, va_end), and tlb_core_map writes after them */
+static u32 core_keep, keep_end;
+void tlb_core_keep(u32 n, u32 va_end) { core_keep = n, keep_end = va_end; }
+
+/* the BIOS's entry i maps over [0x10_0000, keep_end): the side's range */
+static int over_side(u32 i);
+
 void tlb_restore(void) {
   u8 differs[TLB_N];
   int was = mx_di();
@@ -105,7 +116,7 @@ void tlb_restore(void) {
   mx__core_off = 0;
   for (u32 i = TLB_FIRST; i < TLB_N; i++) {
     u32 pm, hi, lo0, lo1;
-    if (i == TLB_RESIDENT) {
+    if (i == TLB_RESIDENT || (i >= TLB_CORE && i < TLB_CORE + core_keep)) {
       differs[i] = 0;
       continue;
     }
@@ -116,7 +127,14 @@ void tlb_restore(void) {
       tlb_write(i, 0, 0xE0000000u + ((TLB_N + i) << 13), 0, 0);
   }
   for (u32 i = TLB_FIRST; i < TLB_N; i++)
-    if (i >= TLB_USED)
+    if (i >= TLB_CORE && i < TLB_CORE + core_keep)
+      continue;
+    /* beside a process's core: no global entry of the BIOS over its range
+       (two entries matching one address are undefined), the others as
+       they are (the kernel's own use of main memory: MODULE_MEM) */
+    else if (core_keep && i >= TLB_CORE && i < TLB_CORE + TLB_CORE_N && over_side(i))
+      tlb_write(i, 0, 0xE0000000u + (i << 13), 0, 0);
+    else if (i >= TLB_USED)
       tlb_write(i, 0, 0xE0000000u + (i << 13), 0, 0);
     else if (differs[i])
       tlb_write(i, bios_tlb[i].pm, bios_tlb[i].hi, bios_tlb[i].lo0, bios_tlb[i].lo1);
@@ -129,19 +147,19 @@ void tlb_restore(void) {
    global entries of cached main memory from 0x10_0000 (14-21) give way to
    entries of that ASID, pages of 4 MiB, 1 MiB or 256 KiB as the alignment
    allows (the main stack is in the core: maxsdk's VM linker scripts). va_end
-   and off: multiples of 1 MiB. -1, the TLB unchanged, if more than those 8
-   entries are needed. tlb_restore writes the BIOS's back. */
-#define TLB_CORE 14
-#define TLB_CORE_N 8
+   and off: multiples of 1 MiB. The entries it took (after those kept for a
+   process beside, tlb_core_keep), or -1, the TLB unchanged, if more than
+   those 8 are needed. tlb_restore writes the BIOS's back. */
 #define LO_CORE 0x1Eu /* cached, D, V, not global */
 
 int tlb_core_map(u32 va_end, u32 off) {
   u32 pm[TLB_CORE_N], hi[TLB_CORE_N], lo0[TLB_CORE_N], lo1[TLB_CORE_N], n = 0;
+  u32 first = TLB_CORE + core_keep, max = TLB_CORE_N - core_keep;
   for (u32 v = 0x00100000u; v < va_end; n++) {
     u32 s = 4u << 20;
     while (s > (256u << 10) && (v % (2 * s) || (v + off) % s || v + 2 * s > va_end))
       s >>= 2;
-    if (n == TLB_CORE_N || v % (2 * s) || (v + off) % s)
+    if (n == max || v % (2 * s) || (v + off) % s)
       return -1;
     pm[n] = ((s >> 12) - 1) << 13;
     hi[n] = v | mx__asid;
@@ -151,10 +169,15 @@ int tlb_core_map(u32 va_end, u32 off) {
   }
   int was = mx_di();
   /* all of them parked first: no two entries may match one address */
-  for (u32 i = 0; i < TLB_CORE_N; i++)
-    tlb_write(TLB_CORE + i, 0, 0xE0000000u + ((TLB_N + TLB_CORE + i) << 13), 0, 0);
+  for (u32 i = 0; i < max; i++)
+    tlb_write(first + i, 0, 0xE0000000u + ((TLB_N + first + i) << 13), 0, 0);
   for (u32 i = 0; i < n; i++)
-    tlb_write(TLB_CORE + i, pm[i], hi[i], lo0[i], lo1[i]);
+    tlb_write(first + i, pm[i], hi[i], lo0[i], lo1[i]);
   mx_irq_restore(was);
-  return 0;
+  return (int)n;
+}
+
+static int over_side(u32 i) {
+  u32 page = ((bios_tlb[i].pm >> 13) + 1) << 12, lo = bios_tlb[i].hi & ~0x1FFFu;
+  return lo < keep_end && lo + 2 * page > 0x00100000u;
 }

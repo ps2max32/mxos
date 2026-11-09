@@ -47,7 +47,7 @@ CFLAGS += $(if $(EMU),-DMXLINK_EMU)
 # to try new ones with the one-shot boot
 CFLAGS += $(if $(MODULE_DIR),-DMODULE_DIR='"$(MODULE_DIR)"')
 
-SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c kirq.c ksched.c
+SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c kirq.c ksched.c kproc.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
 MODULES = poweroff mxdev9 mxeth mxnet mxfast ioptrap sio2man mcman mcserv padman libsd audsrv \
           mxio mxsock usbd mxpad
@@ -59,7 +59,8 @@ LOW_LDFLAGS  = --defsym=__mx_base=0x88000 --defsym=__mx_text=0xC0000 --defsym=__
 HIGH_LDFLAGS = --defsym=__mx_base=0x1E00000 --defsym=__mx_text=0x1E40000 --defsym=__mx_top=0x1F00000 \
                --defsym=__mx_stack_size=0x4000
 
-OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/hook.o $(OUT)/obj/kirq_s.o $(OUT)/obj/ksched_s.o
+OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/hook.o $(OUT)/obj/kirq_s.o $(OUT)/obj/ksched_s.o \
+       $(OUT)/obj/kvu0.o
 
 all: $(OUT)/MXLINK.ELF $(OUT)/iop/mxroot.irx modules
 modules: $(MODULES:%=$(OUT)/MXOS/%.irx) $(OUT)/MXOS/ps2link.irx $(OUT)/MXOS/chime.irx
@@ -78,6 +79,11 @@ $(OUT)/obj/hook.o: ee/hook.S
 $(OUT)/obj/kirq_s.o: ee/kirq.S ee/ksched.h
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# VU0's registers of a process (kproc.c)
+$(OUT)/obj/kvu0.o: ee/kvu0.S
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -mvu0 -c $< -o $@
 
 $(OUT)/obj/ksched_s.o: ee/ksched.S ee/ksched.h
 	@mkdir -p $(dir $@)

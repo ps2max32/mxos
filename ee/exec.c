@@ -118,6 +118,7 @@ static u32 last_asid;
 #define MIN_FRAMES (4u << 20)
 #define MIB (1u << 20)
 static u32 core_end, frames_hi;
+static u32 core_slots; /* the TLB entries of its core (tlb_core_map) */
 
 /* A libmxk program's notes (maxsdk's src/base/kstubs.c, <mx/loader.h>'s
    MX_CORE_HEAP): where its mx__core_off is, if it was built for a kernel of
@@ -167,10 +168,12 @@ static int core_place(u32 end, u32 heap) {
   last_asid = last_asid % 255 + 1;
   mx__asid_set(last_asid);
   mx__core_off = phys - LOW;
-  if (tlb_core_map(va_end, mx__core_off) < 0) {
+  int n = tlb_core_map(va_end, mx__core_off);
+  if (n < 0) {
     tlb_restore();
     return -1;
   }
+  core_slots = (u32)n;
   core_moved = 1;
   core_end = va_end;
   core_phys = frames_hi = phys;
@@ -186,8 +189,8 @@ static int core_place(u32 end, u32 heap) {
    other's end it is mapped again, its kernel state put back, its handlers
    added again, and its call returns the other's exit status. */
 static struct {
-  int on, done, status, tid, shell;
-  u32 asid, core_off, core_end, core_phys, frames_hi;
+  int on, done, status, tid, shell, beside;
+  u32 asid, core_off, core_end, core_phys, frames_hi, core_slots;
   struct mx_loader_args largs;
   u8 *state; /* the kernel's state of it, in its core heap */
 } park;
@@ -202,32 +205,43 @@ int exec_parked(void) { return park.on; }
 int exec_park_done(void) { return park.done; }
 int exec_park_status(void) { return park.status; }
 
-/* in the program's thread: 0, it waits now; -1, it cannot */
-int exec_park(void) {
+/* in the program's thread: 0, it waits now; -1, it cannot. beside (step
+   2e-2, kproc.c): its other threads go on beside the other program, its
+   core's TLB entries kept. */
+int exec_park(int beside) {
   if (park.on || !core_moved || core_vm || !on_libmxk || !end_tables_known())
     return -1;
   if (!park.state)
     park.state = mx__phys_alloc(end_state_size(), 64);
-  if (!park.state || end_park(mx_bios_get_thread_id()) < 0)
+  if (!park.state || end_park(mx_bios_get_thread_id(), beside) < 0)
     return -1;
-  park.tid = user_tid, park.shell = shell;
+  park.tid = user_tid, park.shell = shell, park.beside = beside;
   park.asid = mx__asid, park.core_off = mx__core_off, park.core_end = core_end;
-  park.core_phys = core_phys, park.frames_hi = frames_hi;
+  park.core_phys = core_phys, park.frames_hi = frames_hi, park.core_slots = core_slots;
   park.largs = largs;
   end_state_save(park.state);
   park.done = 0;
   park.on = 1;
-  /* the next program starts with the kernel's state as linked */
-  end_reset_state();
+  /* the next program starts with the kernel's state as linked; beside, it
+     goes on with its own part of it (kproc_side_begin) */
+  if (beside) {
+    tlb_core_keep(core_slots, core_end);
+    kproc_side_begin(ksched_thread_proc(mx_bios_get_thread_id()), park.state);
+  } else
+    end_reset_state();
   user_tid = 0, shell = 0, on_libmxk = 0, core_moved = 0;
   return 0;
 }
 
 /* in the command thread, the other ended (or did not start: status -1) */
 void exec_unpark(int status) {
+  int side = park.beside ? kproc_side() : 0;
+  kproc_side_end(); /* its threads held until it is in front again */
   mx__asid_set(park.asid);
   mx__core_off = park.core_off;
-  if (tlb_core_map(park.core_end, park.core_off) < 0) {
+  int n = tlb_core_map(park.core_end, park.core_off);
+  core_slots = n < 0 ? 0 : (u32)n;
+  if (n < 0) {
     /* cannot be: it was mapped so before */
     mx__core_off = 0;
     mxlink_restart();
@@ -237,10 +251,15 @@ void exec_unpark(int status) {
   user_tid = park.tid, shell = park.shell, on_libmxk = 1, core_moved = 1;
   core_end = park.core_end, core_phys = park.core_phys, frames_hi = park.frames_hi;
   largs = park.largs;
-  end_unpark();
+  if (!park.beside)
+    end_unpark();
+  else
+    end_unpark_beside();
   park.on = 0;
   park.status = status;
   park.done = 1;
+  if (side)
+    ksched_proc_hold(side, 0);
   mx_bios_wakeup_thread(park.tid);
 }
 
@@ -252,6 +271,7 @@ void exec_park_forget(void) {
 
 /* the other takes all memory: the waiting one ends with it */
 void exec_park_drop(void) {
+  kproc_side_end(); /* held: its threads end with the other's */
   end_drop();
   park.on = 0;
   park.state = 0;
@@ -365,6 +385,7 @@ static const struct mxk_services kernel = {
     .irq_tables = end_irq_tables,
     .kthreads = &ksched_kthreads,
     .pad_rumble = pad_rumble,
+    .launch_beside = mxlink_launch_beside,
 };
 
 int exec_elf(int argc, const char *args, u32 args_len) {

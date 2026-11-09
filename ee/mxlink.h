@@ -104,12 +104,19 @@ int end_possible(void);
 /* its threads, semaphores, handlers, the units; then, after main.c's
    cleanup of the IOP, the kernel's state of it set back */
 int end_tables_known(void);
-int end_park(int self);
+int end_park(int self, int beside);
 void end_unpark(void);
 void end_drop(void);
 u32 end_state_size(void);
 void end_state_save(void *to);
 void end_state_load(const void *from);
+void end_state_swap(void *copy);
+void end_unpark_beside(void);
+/* kproc.c: a process beside the one in front (step 2e-2) */
+void kproc_side_begin(int proc, void *state);
+void kproc_side_end(void);
+int kproc_side(void);
+u32 kproc_switches(void);
 void end_cleanup(void);
 void end_kernel_clients(void); /* main.c */
 void end_reset_state(void);
@@ -153,6 +160,7 @@ void mxlink_relaunch(int bios, int argc, const char *args, u32 args_len, const c
 void kirq_off(void);
 void kirq_counts(u32 *intc, u32 *dmac);
 int tlb_core_map(u32 va_end, u32 off);
+void tlb_core_keep(u32 n, u32 va_end);
 /* The BIOS's entry for mxlink's code, for a loader that writes there. */
 void tlb_writable(void);
 
@@ -176,9 +184,10 @@ void mxlink_host_run(void);
 /* mx_loader_launch: the caller ends, or waits and gets the other's exit
    status (step 2c, exec_park) */
 int mxlink_launch(int argc, const char *args, u32 args_len, const char *swap);
+int mxlink_launch_beside(int argc, const char *args, u32 args_len, const char *swap);
 /* step 2c (exec.c) */
 int exec_parked(void);
-int exec_park(void);
+int exec_park(int beside);
 int exec_park_done(void);
 int exec_park_status(void);
 void exec_unpark(int status);

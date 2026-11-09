@@ -277,7 +277,9 @@ void mxlink_return(int status) {
   /* a libmxk program from the resident mxlink: the command thread ends it,
      without the restart (end.c); this thread waits for that. Only one that
      showed the kernel its interrupt handlers (table version 8): an older
-     libmxk's would stay with the BIOS, in the next program's memory. */
+     libmxk's would stay with the BIOS, in the next program's memory.
+     make emu has no command thread: the restart, and emu_main's end marker. */
+#ifndef MXLINK_EMU
   if (exec_on_libmxk() && exec_resident() && end_possible() && end_tables_known() &&
       mx_bios_get_thread_id() != cmd_thread_id()) {
     ending = 1;
@@ -285,6 +287,7 @@ void mxlink_return(int status) {
     for (;;)
       mx_bios_sleep_thread();
   }
+#endif
   restart();
 }
 
@@ -334,7 +337,7 @@ void mxlink_relaunch(int bios, int argc, const char *args, u32 args_len, const c
   restart();
 }
 
-int mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
+static int launch(int argc, const char *args, u32 args_len, const char *swap, int beside) {
   u32 n = swap ? strlen(swap) : 0;
   if (n >= sizeof launch_swap)
     n = 0;
@@ -346,7 +349,7 @@ int mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
   launch_len = args_len;
   /* a program with its core at a run of its own and without VM waits for
      the other, in its own thread (not the command thread's takeover) */
-  if (mx_bios_get_thread_id() != cmd_thread_id() && exec_park() == 0) {
+  if (mx_bios_get_thread_id() != cmd_thread_id() && exec_park(beside) == 0) {
     memcpy(parked_path, last_path, sizeof parked_path);
     pads_close();
     exec_swap(launch_swap[0] ? launch_swap : 0);
@@ -355,9 +358,19 @@ int mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
       mx_bios_sleep_thread();
     return exec_park_status();
   }
+  if (beside)
+    return -1;
   launch_argc = argc;
   launch_cleanup = 1;
   restart();
+}
+
+int mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
+  return launch(argc, args, args_len, swap, 0);
+}
+/* step 2e-2: the caller's other threads go on beside the other (kproc.c) */
+int mxlink_launch_beside(int argc, const char *args, u32 args_len, const char *swap) {
+  return launch(argc, args, args_len, swap, 1);
 }
 
 void mxlink_takeover(int argc, const char *args, u32 args_len) {
@@ -635,6 +648,13 @@ static void emu_main(void) {
     stopped();
   }
   restarts = 1;
+  /* the kernel's threads, as main gives them, unless the program needs the
+     BIOS's: without them a program for kernel version 10 restarted mxlink
+     for them again and again (exec_elf) */
+  if (!bios_mode) {
+    kirq_on();
+    ksched_init();
+  }
   int fd = mx_sif_init() < 0 ? -1 : mx_fio_open("host:mxload.txt", MX_FIO_RDONLY);
   int n = fd < 0 ? -1 : mx_fio_read(fd, args, sizeof args - 1);
   if (fd >= 0)

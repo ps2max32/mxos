@@ -255,8 +255,10 @@ static void slot_set(const void *base, u32 i, int id) {
 
 /* In the waiting program's thread (self), under its ASID: its handlers taken
    from the BIOS (they would run in the other's address space), its other
-   threads suspended, what the kernel knows of it kept. -1: not possible. */
-int end_park(int self) {
+   threads suspended, what the kernel knows of it kept. -1: not possible.
+   beside (step 2e-2): it goes on beside the other, its handlers and threads
+   as they are (the kernel switches to its address space for them, kproc.c). */
+int end_park(int self, int beside) {
   if (!tables_known || !tables.intc_entry || !tables.dmac_entry ||
       !program_range(tables.intc_entry, 4) || !program_range(tables.dmac_entry, 4))
     return -1;
@@ -265,6 +267,10 @@ int end_park(int self) {
   parked.tables = tables;
   parked.proc = proc_now, parked.dropped = proc_dropped;
   parked.intc_mask = parked.dmac_mask = 0;
+  parked.nthreads = 0;
+  parked.drop = 0;
+  if (beside)
+    return 0;
   for (u32 i = 0; i < tables.nintc; i++) {
     int id = slot_id(tables.intc, i);
     if (id > 0) {
@@ -285,19 +291,23 @@ int end_park(int self) {
       mx_bios_suspend_thread(id);
       parked.threads[parked.nthreads++] = (u8)id;
     }
-  parked.drop = 0;
   return 0;
 }
 
 /* In the command thread, under its ASID again, its kernel state back: its
    handlers added again (their new ids in its slots), its causes and
    channels on, its threads resumed. */
-void end_unpark(void) {
+/* beside (end_park): what the kernel knows of it back, its handlers and
+   threads as they are */
+void end_unpark_beside(void) {
   for (int i = 0; i < NIDS / 32; i++)
     threads_before[i] = parked.threads_before[i], semas_before[i] = parked.semas_before[i];
   tables = parked.tables;
   tables_known = 1;
   proc_now = parked.proc, proc_dropped = parked.dropped;
+}
+void end_unpark(void) {
+  end_unpark_beside();
   for (u32 i = 0; i < tables.nintc; i++)
     if (parked.intc_mask >> i & 1) {
       slot_set(tables.intc, i, mx_bios_add_intc_handler((int)i, (int (*)(int, void *, void *))(uintptr_t)tables.intc_entry, 0, 0));
@@ -324,6 +334,24 @@ void end_state_save(void *to) {
   u32 d = (u32)(__prog_data_end - __prog_data_start);
   memcpy(to, __prog_data_start, d);
   memcpy((u8 *)to + d, __prog_bss_start, (u32)(__prog_bss_end - __prog_bss_start));
+}
+/* A process beside the one in front (kproc.c): its part of the state
+   (__proc_*) exchanged with the live one, at the same place in the copy. */
+static void swap_words(u32 *a, u32 *b, u32 bytes) {
+  for (u32 i = 0; i < bytes / 4; i++) {
+    u32 t = a[i];
+    a[i] = b[i];
+    b[i] = t;
+  }
+}
+extern char __proc_data_start[], __proc_data_end[], __proc_bss_start[], __proc_bss_end[];
+void end_state_swap(void *copy) {
+  u8 *c = copy;
+  u32 d = (u32)(__prog_data_end - __prog_data_start);
+  swap_words((u32 *)__proc_data_start, (u32 *)(c + (__proc_data_start - __prog_data_start)),
+             (u32)(__proc_data_end - __proc_data_start));
+  swap_words((u32 *)__proc_bss_start, (u32 *)(c + d + (__proc_bss_start - __prog_bss_start)),
+             (u32)(__proc_bss_end - __proc_bss_start));
 }
 void end_state_load(const void *from) {
   u32 d = (u32)(__prog_data_end - __prog_data_start);

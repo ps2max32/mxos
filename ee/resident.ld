@@ -24,17 +24,23 @@ SECTIONS {
   __self_end = __mx_top;
 
   /* The kernel's state of a program (ee/end.c): its .data here, its .bss
-     below; set back as linked when a program ends without the restart. */
+     below; set back as linked when a program ends without the restart. Of
+     it, __proc_*: what a process beside the one in front has of its own,
+     exchanged at a switch between the two (kproc.c, step 2e-2); the rest
+     (the VM, the image, the home menu) is the one in front's. */
   .data ORIGIN(ram) : {
     __data_start = .;
     __prog_data_start = .;
-    *libmxkern.a:vm.c.o(.data .data.*)
-    *libmxkern.a:image.c.o(.data .data.*)
+    __proc_data_start = .;
     *libmxkern.a:heap.c.o(.data .data.*)
     *libmxkern.a:mem.c.o(.data .data.*)
     *libmxkern.a:exception.c.o(.data .data.*)
     *libmxkern.a:thread.c.o(.data .data.*)
     *libmxkern.a:pad.c.o(.data .data.*)
+    . = ALIGN(4);
+    __proc_data_end = .;
+    *libmxkern.a:vm.c.o(.data .data.*)
+    *libmxkern.a:image.c.o(.data .data.*)
     *home.o(.data .data.*)
     __prog_data_end = .;
     *(.data .data.*)
@@ -57,22 +63,32 @@ SECTIONS {
     /* MX_DMA_LINES (<mx/cpu.h>): each variable on lines of its own, the
        last one too; the program's first (ee/end.c) */
     __prog_bss_start = .;
-    *libmxkern.a:vm.c.o(.bss.mx.lines)
-    *libmxkern.a:image.c.o(.bss.mx.lines)
+    /* DMA lines (the pad's buffers for SIF DMA): never exchanged, the IOP
+       may be reading or writing them; the one in front's */
     *libmxkern.a:heap.c.o(.bss.mx.lines)
     *libmxkern.a:mem.c.o(.bss.mx.lines)
     *libmxkern.a:exception.c.o(.bss.mx.lines)
     *libmxkern.a:thread.c.o(.bss.mx.lines)
     *libmxkern.a:pad.c.o(.bss.mx.lines)
+    . = ALIGN(64);
+    __proc_bss_start = .;
+    *libmxkern.a:heap.c.o(.bss .bss.* COMMON)
+    *libmxkern.a:mem.c.o(.bss .bss.* COMMON)
+    /* exception.c's but its stack (in use only within an exception), by
+       name: a new variable there is the one in front's until added here */
+    *libmxkern.a:exception.c.o(.bss.mx__exception_report.* .bss.mx__exception_state
+                               .bss.mx__exception_note .bss.mx__text_lo .bss.mx__text_hi)
+    *libmxkern.a:thread.c.o(.bss .bss.* COMMON)
+    *libmxkern.a:pad.c.o(.bss .bss.* COMMON)
+    . = ALIGN(64);
+    __proc_bss_end = .;
+    *libmxkern.a:exception.c.o(.bss .bss.*)
+    *libmxkern.a:vm.c.o(.bss.mx.lines)
+    *libmxkern.a:image.c.o(.bss.mx.lines)
     *home.o(.bss.mx.lines)
     . = ALIGN(64);
     *libmxkern.a:vm.c.o(.bss .bss.* COMMON)
     *libmxkern.a:image.c.o(.bss .bss.* COMMON)
-    *libmxkern.a:heap.c.o(.bss .bss.* COMMON)
-    *libmxkern.a:mem.c.o(.bss .bss.* COMMON)
-    *libmxkern.a:exception.c.o(.bss .bss.* COMMON)
-    *libmxkern.a:thread.c.o(.bss .bss.* COMMON)
-    *libmxkern.a:pad.c.o(.bss .bss.* COMMON)
     *home.o(.bss .bss.* COMMON)
     . = ALIGN(64);
     __prog_bss_end = .;

@@ -37,6 +37,7 @@ struct kth {
   struct kctx c; /* first: ksched_cur points at it */
   u8 state, suspended, prio, init_prio;
   u8 proc;       /* its process: 0 the kernel's, else a program's (step 2d-3) */
+  u8 held;       /* its process held by the kernel (kproc.c): not run */
   s16 sema;      /* waited for */
   s16 result;    /* WaitSema's: its id, or -1 when it was deleted */
   u32 seq;       /* order among equals */
@@ -56,6 +57,7 @@ struct kctx *ksched_cur;
 volatile int ksched_need;
 static u32 seq;
 static int active;
+static int idle_id;
 
 int ksched_active(void) { return active; }
 
@@ -66,7 +68,7 @@ static struct kth *thread(int id) {
 }
 
 static int runnable(struct kth *t) {
-  return (t->state == T_READY || t->state == T_RUN) && !t->suspended;
+  return (t->state == T_READY || t->state == T_RUN) && !t->suspended && !t->held;
 }
 
 /* t is ready now: a switch wanted if it comes before the running one */
@@ -93,6 +95,9 @@ struct kctx *ksched_pick(void) {
   }
   best->state = T_RUN;
   ksched_cur = &best->c;
+  /* in its process's address space (step 2e-2); the idle thread in any */
+  if (id_of(best) != idle_id)
+    kproc_thread(best->proc);
   return ksched_cur;
 }
 
@@ -500,6 +505,17 @@ int ksched_thread_proc(int id) {
   return t ? t->proc : -1;
 }
 
+/* a process's threads not run (hold), or run again; interrupts as they are */
+void ksched_proc_hold(int proc, int hold) {
+  int was = mx_di();
+  for (int i = 1; i <= NTHREADS; i++)
+    if (th[i].state != T_FREE && th[i].proc == proc && &th[i] != cur())
+      th[i].held = (u8)hold;
+  if (!hold)
+    ksched_need = 1;
+  mx_irq_restore(was);
+}
+
 int ksched_sema_proc(int id) {
   struct ksema *s = sema_of(id);
   return s ? s->proc : -1;
@@ -512,6 +528,7 @@ static struct {
   khandler fn;
   void *arg;
   s16 line, n; /* 0 INTC / 1 DMAC, its cause or channel */
+  u8 proc;      /* the process that added it: run in its space */
 } handler[NHANDLERS + 1];  /* ids 1..NHANDLERS */
 static u32 owned[2];       /* the causes and channels with a handler here */
 
@@ -533,6 +550,7 @@ static int add_handler(int line, int n, khandler fn, int next, void *arg) {
   for (int i = 1; i <= NHANDLERS; i++)
     if (!handler[i].fn) {
       handler[i].fn = fn, handler[i].arg = arg, handler[i].line = (s16)line, handler[i].n = (s16)n;
+      handler[i].proc = cur()->proc;
       int at = 0;
       if (next == -1)
         at = norder;
@@ -629,8 +647,13 @@ u32 ksched_dispatch(int line, u32 epc) {
       /* in order; one returning -1 skips the rest (the BIOS's) */
       for (int k = 0; k < norder; k++) {
         int i = order[k];
-        if (handler[i].fn && handler[i].line == line && handler[i].n == n &&
-            handler[i].fn(n, handler[i].arg, (void *)(uintptr_t)epc) == -1)
+        if (!handler[i].fn || handler[i].line != line || handler[i].n != n)
+          continue;
+        int sw = kproc_handler_enter(handler[i].proc);
+        int r = handler[i].fn(n, handler[i].arg, (void *)(uintptr_t)epc);
+        if (sw)
+          kproc_handler_leave();
+        if (r == -1)
           break;
       }
     }
@@ -733,5 +756,6 @@ void ksched_init(void) {
   mx_bios_set_syscall(KSCHED_SYSCALL, (void *)ksched_switch_k);
   mx__kthreads = &ksched_kthreads;
   active = 1;
-  k_start_thread(k_create_thread(&ip), 0);
+  idle_id = k_create_thread(&ip);
+  k_start_thread(idle_id, 0);
 }
