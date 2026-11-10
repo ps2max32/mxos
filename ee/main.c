@@ -950,6 +950,12 @@ static void after_program(void) {
     service_off = 1;
   }
   service_try = 0;
+  /* the shell crashed, also before its first line (in its start): the text
+     screen until the next reset, not the shell again and again */
+  if (came_back && crash_return == returns && !strcmp(last_path, SHELL_PATH) && !no_shell) {
+    con_log(CON_RED, "the shell %s crashed: not started again until a reset", SHELL_PATH);
+    no_shell = 1;
+  }
   con_log(CON_GREEN, "mx kernel %s ready", MXLINK_VERSION);
   if (launch_argc) {
     int argc = launch_argc;
