@@ -39,6 +39,8 @@ static struct {
 } usb __attribute__((section(".padarea"), aligned(64)));
 static struct mx_sif_client usb_rpc;
 static int usb_on;
+/* the player each USB slot's light shows, one byte a slot (MXPAD_PLAYERS) */
+static u32 players_sent;
 
 /* After the IOP's set-up (main.c): mxpad told where the area is, if it runs. */
 void pad_usb_start(void) {
@@ -54,6 +56,7 @@ void pad_usb_start(void) {
   if (mx_sif_call(&usb_rpc, MXPAD_AREA, (void *)in, 16, (void *)out, 16) < 0 || out[0] != MXPAD_VERSION)
     return;
   usb_on = 1;
+  players_sent = 0x03020100; /* mxpad's own after its start: each slot its number */
 }
 
 /* the newer of the slot's two records */
@@ -220,7 +223,32 @@ static int home_anywhere(void) {
   return 0;
 }
 
+/* The light of each USB and Bluetooth pad: the player (port) it is, which
+   changes when a SIO2 pad comes or goes, with the swap of ports 0 and 1 */
+static void pad_players(void) {
+  _Static_assert(MXPAD_PADS == 4, "pad_players: a byte a slot in one word");
+  u32 want = 0x03020100;
+  for (int port = 0; port < PAD_PORTS; port++) {
+    int sio, n;
+    struct mxpad_record rec;
+    if (!port_source(port, &sio, &n, &rec) || sio)
+      continue;
+    int player = pad_settings.swap_ports && port <= 1 ? port ^ 1 : port;
+    want = (want & ~(0xFFu << 8 * n)) | (u32)player << 8 * n;
+  }
+  if (want == players_sent)
+    return;
+  volatile u32 *in = MX_UNCACHED(usb.in), *out = MX_UNCACHED(usb.out);
+  in[0] = want, in[1] = in[2] = in[3] = 0;
+  out[0] = (u32)-1;
+  /* an mxpad.irx before MXPAD_PLAYERS answers -1: not asked again */
+  if (mx_sif_call(&usb_rpc, MXPAD_PLAYERS, (void *)in, 16, (void *)out, 16) >= 0)
+    players_sent = want;
+}
+
 int pad_read(int port, struct mx_pad_state *s, int sticks) {
+  if (port == 0 && usb_on)
+    pad_players();
   if (pad_settings.swap_ports && (unsigned)port <= 1)
     port ^= 1;
   int r = pad_merged(port, s, sticks);
