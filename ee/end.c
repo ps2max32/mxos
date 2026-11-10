@@ -246,8 +246,8 @@ void end_cleanup(void) {
      what the next program's load brought in by DMA (a game in VM, then the
      shell: the shell ran its font as code). ExecPS2 did this. Both caches
      now, before anything is loaded. */
-  mx_bios_flush_cache(0);
-  mx_bios_flush_cache(2);
+  mx_dcache_flush_all();
+  mx_icache_invalidate_all();
 }
 
 void end_reset_state(void) {

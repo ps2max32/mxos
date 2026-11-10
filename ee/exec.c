@@ -206,14 +206,14 @@ static struct {
 void *mx__phys_alloc(u32 bytes, u32 align);
 
 static u32 mem_top(void) {
-  return park.on ? park.core_phys : mx_bios_get_memory_size() & ~(MIB - 1);
+  return park.on ? park.core_phys : MX_MAIN_BYTES & ~(MIB - 1);
 }
 int exec_parked(void) { return park.on; }
 /* the physical memory of the program that ends (sound_off): all from 1 MiB
    up but the core of one that waits or runs beside it, at the top */
 void exec_end_range(u32 *lo, u32 *hi) {
   *lo = LOW;
-  *hi = park.on ? park.core_phys : mx_bios_get_memory_size();
+  *hi = park.on ? park.core_phys : MX_MAIN_BYTES;
 }
 
 /* the program a parked one started (proc_spawn, proc_wait; kernel version
@@ -681,8 +681,8 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   else
     con_log(CON_GREY, "  %u KiB loaded, entry %08x", bytes >> 10, eh.entry);
 
-  mx_bios_flush_cache(0);
-  mx_bios_flush_cache(2);
+  mx_dcache_flush_all();
+  mx_icache_invalidate_all();
 
   if (loader) {
     /* a loader (another mxlink, ps2link, ...) gets the machine, as from a

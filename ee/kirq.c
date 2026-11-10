@@ -86,7 +86,7 @@ static u32 kcall(u32 a, u32 v, u32 write) { return kcall4(a, v, write, 0); }
    (interrupts are off in the syscall). Writing is a service's only (the
    host link's writemem). 0, or -1. */
 int kmem_copy(u32 phys, void *buf, u32 n, int write) {
-  u32 size = mx_bios_get_memory_size(), a = (u32)(uintptr_t)buf;
+  u32 size = MX_MAIN_BYTES, a = (u32)(uintptr_t)buf;
   if (!on || phys >= size || n > size - phys || !n || mx_is_vm(buf) || a < 0x100000u ||
       a + n < a || a + n > 0x02000000u || (write && !exec_service_caller()))
     return -1;
@@ -100,8 +100,8 @@ int kmem_copy(u32 phys, void *buf, u32 n, int write) {
     done += k;
   }
   if (write) {
-    mx_bios_flush_cache(0);
-    mx_bios_flush_cache(2);
+    mx_dcache_flush_all();
+    mx_icache_invalidate_all();
   }
   return 0;
 }
@@ -121,8 +121,8 @@ void kirq_on(void) {
     kirq_orig[1] = dmac;
   if ((kirq_orig[0] >> 28) != 8 || (kirq_orig[1] >> 28) != 8)
     return; /* not the table expected: the BIOS's stays */
-  mx_bios_flush_cache(0);
-  mx_bios_flush_cache(2);
+  mx_dcache_flush_all();
+  mx_icache_invalidate_all();
   int was = mx_di();
   kcall(ENTRY_INTC, my_intc, 1);
   kcall(ENTRY_DMAC, my_dmac, 1);

@@ -237,7 +237,7 @@ static void restart(void) {
   char *argv[1] = {boot_path};
   restarts++;
   mx_debug_flush();
-  mx_bios_flush_cache(0);
+  mx_dcache_flush_all();
   /* ExecPS2 drops the handlers but leaves the channel on: a command from the
      host now would end in the kernel's "DMAC(5) Handler does not exist" and
      its break. cmd_init turns it on again. */
@@ -743,7 +743,7 @@ static void screen(void) {
   u32 self_start, self_end;
   exec_self(&self_start, &self_end);
   con_line(ROW_MEM, CON_WHITE, "Memory: kernel %05x-%05x, programs 00100000-%08x",
-           self_start, self_end, mx_bios_get_memory_size());
+           self_start, self_end, MX_MAIN_BYTES);
   con_line(ROW_HELP, CON_GREY, "ps2client -h %s execee host:<elf> [args]", ip);
   if (last_path[0])
     con_line(ROW_LAST, last_status ? CON_RED : CON_WHITE, "Last:   %s, exit status %d", last_path,
