@@ -142,3 +142,26 @@ void kirq_off(void) {
   mx_irq_restore(was);
   on = 0;
 }
+
+/* The BIOS's SetupThread (docs/bios.md) copies into the argument block it is
+   given the argc strings at the block the calling BIOS thread's last
+   SetupThread was given (its thread table, 0x8001_A650, 0x4C bytes a thread:
+   argc at +0x24, that block at +0x28), then keeps the new block there. The
+   kernel's threads all run on one BIOS thread, so a program's start-up read
+   the block of the program before it: after one at its own addresses (one
+   that takes all memory), an address the next one, under its own ASID, does
+   not have (a TLB miss in SetupThread before its first line). Before each
+   program: argc 0, nothing copied. maxsdk's programs take their arguments
+   from the kernel's (struct mx_loader_args); SetupThread's were the kernel's
+   own anyway. */
+#define BIOS_THREAD_NOW 0x800155ACu
+#define BIOS_THREADS 0x8001A650u
+#define BIOS_THREAD_SIZE 0x4Cu
+#define BIOS_THREAD_ARGC 0x24u
+void kirq_setup_args_clear(void) {
+  if (!on)
+    return;
+  u32 tid = kcall(BIOS_THREAD_NOW, 0, 0);
+  if (tid > 0 && tid < 256)
+    kcall(BIOS_THREADS + tid * BIOS_THREAD_SIZE + BIOS_THREAD_ARGC, 0, 1);
+}

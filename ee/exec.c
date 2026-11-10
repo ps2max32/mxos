@@ -702,6 +702,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   int proc = ksched_active() ? ksched_proc_new() : 0;
   end_snapshot(proc);
   on_libmxk = 0;
+  kirq_setup_args_clear(); /* SetupThread: not the block of the program before */
   struct thread_param tp = {0};
   tp.func = (void *)(uintptr_t)eh.entry;
   tp.stack = user_stack;

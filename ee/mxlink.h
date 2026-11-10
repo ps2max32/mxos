@@ -158,6 +158,8 @@ void kirq_on(void);
 void mxlink_relaunch(int bios, int argc, const char *args, u32 args_len, const char *swap)
     __attribute__((noreturn));
 void kirq_off(void);
+/* before a program: the BIOS thread's SetupThread arguments none (kirq.c) */
+void kirq_setup_args_clear(void);
 void kirq_counts(u32 *intc, u32 *dmac);
 int tlb_core_map(u32 va_end, u32 off);
 #ifdef MXLINK_EMU
