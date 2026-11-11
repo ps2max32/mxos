@@ -22,9 +22,20 @@
 #define ENTRY_INTC (TABLE + 4 * 2)
 #define ENTRY_DMAC (TABLE + 4 * 3)
 #define POKE_SYSCALL 0x69 /* RFU105: unused by the BIOS (0x5C is EnableIntcHandler) */
+/* the BIOS's exception table, entry 8: the syscall dispatcher (ksys.S) */
+#define ENTRY_SYSCALL (0x80015340u + 4 * 8)
 
 void kirq_intc(void);
 void kirq_dmac(void);
+void ksys_entry(void);
+
+/* ksys.S's: the BIOS syscalls of the program watched (mx OS plan step
+   2h-3), by v1 & 0xFF; the ASID watched (none: above 0xFF); the BIOS's
+   dispatcher. Kept over the restart: a program that ends in one is
+   reported after it. */
+u32 ksys_counts[256] __attribute__((section(".kept"))) = {0};
+u32 ksys_watch __attribute__((section(".kept"))) = 0x100;
+u32 ksys_orig __attribute__((section(".kept"))) = 0;
 
 /* kirq.S's: the registers it keeps, its stack, the BIOS's handlers (kept
    over the restart: the table may still point here then) */
@@ -134,13 +145,35 @@ void kirq_on(void) {
     kirq_orig[1] = dmac;
   if ((kirq_orig[0] >> 28) != 8 || (kirq_orig[1] >> 28) != 8)
     return; /* not the table expected: the BIOS's stays */
+  u32 sys = kcall(ENTRY_SYSCALL, 0, 0), my_sys = kseg0(ksys_entry);
+  if (sys != my_sys)
+    ksys_orig = sys;
   mx_dcache_flush_all();
   mx_icache_invalidate_all();
   int was = mx_di();
   kcall(ENTRY_INTC, my_intc, 1);
   kcall(ENTRY_DMAC, my_dmac, 1);
+  if ((ksys_orig >> 28) == 8)
+    kcall(ENTRY_SYSCALL, my_sys, 1);
   mx_irq_restore(was);
   on = 1;
+}
+
+/* The program started now is watched (its ASID; 0 at its own addresses):
+   its counts from 0 */
+void ksys_watch_set(u32 asid) {
+  for (int i = 0; i < 256; i++)
+    ksys_counts[i] = 0;
+  ksys_watch = asid & 0xFF;
+  mx_dcache_flush_all();
+}
+
+/* The program watched has ended: no more counting; its counts (256, by
+   v1 & 0xFF), written back by the stub through kseg0 */
+const u32 *ksys_watch_end(void) {
+  ksys_watch = 0x100;
+  mx_dcache_flush_all();
+  return ksys_counts;
 }
 
 void kirq_off(void) {
@@ -152,6 +185,8 @@ void kirq_off(void) {
     kcall(ENTRY_INTC, kirq_orig[0], 1);
   if ((kirq_orig[1] >> 28) == 8)
     kcall(ENTRY_DMAC, kirq_orig[1], 1);
+  if ((ksys_orig >> 28) == 8)
+    kcall(ENTRY_SYSCALL, ksys_orig, 1);
   mx_irq_restore(was);
   on = 0;
 }

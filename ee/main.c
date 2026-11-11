@@ -231,6 +231,41 @@ const int mx__debug_start_sinks = MX_SINK_SIO;
    thread) prints no end marker, mxlink does when the program is back */
 const int mx__kernel_self = 1;
 
+/* The BIOS syscalls the program that ended made from its own code (mx OS
+   plan step 2h-3; kirq.c, ksys.S), by number (an i-call's negative), with
+   their counts, a few to a line: on the screen's log, or (log 0: before the
+   screen, the emu build) the debug output. */
+static void bios_calls_report(int log) {
+  const u32 *n = ksys_watch_end();
+  char line[84];
+  u32 len = 0, total = 0;
+  for (int i = 0; i < 256; i++)
+    total += n[i];
+  if (log)
+    con_log(CON_GREY, "  BIOS syscalls: %u%s", total, total ? ", by number:" : "");
+  else
+    mx_printf("mxkernel:   BIOS syscalls: %u%s\n", total, total ? ", by number:" : "");
+  for (int i = 0; i < 256; i++) {
+    if (!n[i])
+      continue;
+    if (len > 60) {
+      if (log)
+        con_log(CON_GREY, "  %s", line);
+      else
+        mx_printf("mxkernel:   %s\n", line);
+      len = 0;
+    }
+    len += (u32)mx_snprintf(line + len, sizeof line - len, "%s%s%02x x%u", len ? ", " : "",
+                            i >= 0x80 ? "-" : "", i >= 0x80 ? 256 - i : i, n[i]);
+  }
+  if (len) {
+    if (log)
+      con_log(CON_GREY, "  %s", line);
+    else
+      mx_printf("mxkernel:   %s\n", line);
+  }
+}
+
 static void restart(void) __attribute__((noreturn));
 static void restart(void) {
   extern char mxlink_start[], _gp[];
@@ -833,6 +868,7 @@ static void emu_main(void) {
   static char args[256];
   if (returned) {
     mx_printf("mxkernel: %s returned, exit status %d\n", last_path, (int)last_status);
+    bios_calls_report(0);
     mx_printf("@@PS2TEST_END@@ status=%d\n", (int)last_status);
     stopped();
   }
@@ -932,9 +968,11 @@ static void after_program(void) {
   if (chime)
     con_log(CON_GREY, "sound reset: %d voices were on, auto DMA %d; blip envelope %04x",
             chime >> 2 & 63, chime >> 8 & 3, chime >> 12 & 0xFFFF);
-  if (returned)
+  if (returned) {
     con_log(last_status ? CON_RED : CON_GREEN, "%s returned, exit status %d", last_path,
             (int)last_status);
+    bios_calls_report(1);
+  }
   if (returned && crash_return == returns && crash.note)
     con_log(CON_RED, "%s", crash.note);
   /* A run ends here, however the program ended: not every way out prints the

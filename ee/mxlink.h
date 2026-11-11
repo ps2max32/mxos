@@ -156,6 +156,10 @@ void tlb_restore(void);
 /* kirq.c: the kernel first at INTC and DMAC interrupts (step 2d-1) */
 void kirq_on(void);
 void kirq_off(void);
+/* kirq.c, ksys.S: the BIOS syscalls of the program started last, counted
+   (mx OS plan step 2h-3) */
+void ksys_watch_set(u32 asid);
+const u32 *ksys_watch_end(void);
 /* before a program: the BIOS thread's SetupThread arguments none (kirq.c) */
 void kirq_setup_args_clear(void);
 void kirq_counts(u32 *intc, u32 *dmac);
