@@ -161,6 +161,15 @@ void kirq_off(void);
 /* before a program: the BIOS thread's SetupThread arguments none (kirq.c) */
 void kirq_setup_args_clear(void);
 void kirq_counts(u32 *intc, u32 *dmac);
+int kirq_is_on(void);
+u32 kpeek32(u32 a);
+void kpoke32(u32 a, u32 v);
+u32 kpeek16(u32 a);
+void kpoke16(u32 a, u32 v);
+/* kvideo.c: the CRTC timing without the BIOS (kernel version 22) */
+struct mx_crtc;
+void kvideo_init(void);
+int kvideo_crtc_set(const struct mx_crtc *c);
 int tlb_core_map(u32 va_end, u32 off);
 #ifdef MXLINK_EMU
 void tlb_emu_asid(u32 asid);

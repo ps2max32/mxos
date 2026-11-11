@@ -515,6 +515,8 @@ static const struct mxk_services kernel = {
     .pad_read = pad_read,
     .gs_display = home_gs_display,
     .gs_mode = home_gs_mode,
+    .crtc_set = kvideo_crtc_set,
+    .iop_write = mx__iop_write_phys,
     .home_wanted = home_wanted,
     .home_run = home_run,
     .irq_tables = end_irq_tables,
@@ -693,6 +695,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     kirq_off();
     mx_debug_flush();
     tlb_writable();
+    mx__sif_dma_give();
     mx_bios_exec_ps2((void *)(uintptr_t)eh.entry, 0, largs.args.argc, largs.args.argv);
     return fail(-1, path, "ExecPS2 returned");
   }

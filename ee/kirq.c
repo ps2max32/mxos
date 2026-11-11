@@ -14,6 +14,8 @@
 #include <mx/vm.h>
 
 #include "ksched.h"
+#include <mx/sifdma.h>
+
 #include "mxlink.h"
 
 #define TABLE 0x80015380u
@@ -48,8 +50,14 @@ void kirq_counts(u32 *intc, u32 *dmac) {
 /* kernel memory written or read in kernel mode, by a syscall handler: op 0
    reads the word at a, 1 writes v there; 2 copies n bytes from physical v
    (through kseg0) to a, 3 from a to physical v (a: the caller's memory,
-   mapped under its ASID in kernel mode too) */
+   mapped under its ASID in kernel mode too); 4 reads the halfword at a, 5
+   writes v there (registers in kseg1, kvideo.c) */
 static u32 k_poke(u32 a, u32 v, u32 op, u32 n) {
+  if (op >= 4) {
+    if (op == 5)
+      *(volatile u16 *)a = (u16)v;
+    return *(volatile u16 *)a;
+  }
   if (op >= 2) {
     volatile u8 *m = (volatile u8 *)(uintptr_t)(0x80000000u | v), *u = (volatile u8 *)(uintptr_t)a;
     if (op == 2)
@@ -108,10 +116,15 @@ int kmem_copy(u32 phys, void *buf, u32 n, int write) {
 
 static u32 kseg0(void (*f)(void)) { return 0x80000000u | ((u32)(uintptr_t)f & 0x1FFFFFFFu); }
 
+/* maxsdk's stores to the SIF's DMA registers (sifdma.c): the syscall stays
+   set after kirq_off, until the ExecPS2 */
+static void sif_poke(u32 a, u32 v) { kcall(a, v, 1); }
+
 void kirq_on(void) {
   if (on)
     return;
   mx_bios_set_syscall(POKE_SYSCALL, (void *)k_poke);
+  mx__kpoke32 = sif_poke;
   u32 intc = kcall(ENTRY_INTC, 0, 0), dmac = kcall(ENTRY_DMAC, 0, 0);
   u32 my_intc = kseg0(kirq_intc), my_dmac = kseg0(kirq_dmac);
   /* not ours already (a restart left them): the BIOS's */
@@ -164,4 +177,17 @@ void kirq_setup_args_clear(void) {
   u32 tid = kcall(BIOS_THREAD_NOW, 0, 0);
   if (tid > 0 && tid < 256)
     kcall(BIOS_THREADS + tid * BIOS_THREAD_SIZE + BIOS_THREAD_ARGC, 0, 1);
+}
+
+/* kernel mode loads and stores for kvideo.c (0 while the syscall is not there) */
+int kirq_is_on(void) { return on; }
+u32 kpeek32(u32 a) { return on ? kcall(a, 0, 0) : 0; }
+void kpoke32(u32 a, u32 v) {
+  if (on)
+    kcall(a, v, 1);
+}
+u32 kpeek16(u32 a) { return on ? kcall4(a, 0, 4, 0) : 0; }
+void kpoke16(u32 a, u32 v) {
+  if (on)
+    kcall4(a, v, 5, 0);
 }

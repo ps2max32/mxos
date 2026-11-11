@@ -12,6 +12,7 @@
 
 #include <mx/bios.h>
 #include <mx/cpu.h>
+#include <mx/sifdma.h>
 #include <mx/debug.h>
 #include <mx/gs.h>
 #include <mx/hw/regs.h>
@@ -246,6 +247,7 @@ static void restart(void) {
      interrupt must not find the kernel's entry with its state half reset */
   mx_di();
   kirq_off();
+  mx__sif_dma_give(); /* the BIOS's SIF1 ring again, for whoever runs next */
   mx_bios_exec_ps2(mxlink_start, _gp, 1, argv);
   for (;;)
     ;
@@ -310,7 +312,22 @@ void mx__crash_kept(struct mx_crash *c) {
   c->note = n ? crash_note : 0;
   crash = *c;
   crash_return = returns + 1;
+  /* on the screen at once: the report after this goes to the host, through
+     the SIF, which may be what is broken */
+  con_line(ROW_LAST + 1, CON_RED, "Crash:  %s at %08x, address %08x, ra %08x", c->what, c->epc,
+           c->badvaddr, c->ra);
   mx__fio_crash();
+}
+
+/* sif.c: a SIF wait of over 3 s (1 the send, 2 the answer). On the screen
+   only: the log's host copy would go through the SIF that is stuck. */
+void mx__sif_stuck(int where) {
+  u32 d[8];
+  mx__sif_dma_state(d);
+  con_line(ROW_LAST + 1, CON_YELLOW, "SIF stuck (%s): own %u want %u written %u cur %u",
+           where == 1 ? "send" : "answer", d[0], d[1], d[2], d[3]);
+  con_line(ROW_LAST + 2, CON_YELLOW, "SIF1 CHCR %08x TADR %08x QWC %x MADR %08x D_STAT %08x", d[4],
+           d[5], d[6], d[7], MX_R32(MX_D_STAT));
 }
 
 int mxlink_crash(struct mx_crash *c) {
@@ -840,6 +857,8 @@ static void emu_main(void) {
      for them again and again (exec_elf) */
   if (!bios_mode) {
     kirq_on();
+    mx__sif_dma_take(); /* SIF1 through maxsdk's ring, not the BIOS's */
+    kvideo_init();      /* the video modes without SetGsCrt */
     ksched_init();
     kmsg_init();
     klog_init();
@@ -899,6 +918,8 @@ int main(int argc, char **argv) {
      version 10) */
   if (!bios_mode) {
     kirq_on();
+    mx__sif_dma_take(); /* SIF1 through maxsdk's ring, not the BIOS's */
+    kvideo_init();      /* the video modes without SetGsCrt */
     ksched_init();
     kmsg_init();
     klog_init();

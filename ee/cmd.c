@@ -13,6 +13,7 @@
    are the app's only. */
 
 #include <mx/bios.h>
+#include <mx/kernel.h>
 #include <mx/cpu.h>
 #include <mx/debug.h>
 #include <mx/hw/formats.h>
@@ -66,7 +67,7 @@ static int sif0_handler(int ch, void *arg, void *addr) {
     pkt_new = 1;
     mx_bios_iwakeup_thread(cmd_tid);
   }
-  mx_bios_isif_set_dchain();
+  mx__sif_dchain(1);
   return 0;
 }
 
@@ -324,7 +325,7 @@ int cmd_init(void) {
   if (MX_R32(MX_D_STAT) & (1u << MX_DMAC_SIF0))
     MX_R32(MX_D_STAT) = 1u << MX_DMAC_SIF0;
   if (!(MX_R32(MX_DMA_SIF0_CHCR) & 0x100))
-    mx_bios_sif_set_dchain();
+    mx__sif_dchain(0);
   sif0_id = mx_bios_add_dmac_handler(MX_DMAC_SIF0, sif0_handler, 0, 0);
   mx_bios_enable_dmac(MX_DMAC_SIF0);
   return sif0_id < 0 ? -1 : 0;

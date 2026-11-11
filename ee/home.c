@@ -58,7 +58,9 @@ void home_gs_display(const u64 *r, u32 mask) {
 }
 
 void home_gs_mode(const struct mx_video_mode *m) {
-  mode = *m;
+  /* a program before version 22 has no crtc: the fields before it */
+  __builtin_memcpy(&mode, m, __builtin_offsetof(struct mx_video_mode, crtc));
+  mode.crtc = 0;
   mode_known = 1;
 }
 
