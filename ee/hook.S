@@ -1,5 +1,6 @@
 /* Where mxlink starts, every time. The first start saves .data; the others
-   restore it. ExecPS2 does not load the ELF again: a variable's start value
+   restore it. A restart (ExecPS2 the first time, the kernel's own jump here
+   after it: main.c's restart) does not load the ELF again: a variable's start value
    would be what the last run left (a semaphore's id, say, which the BIOS gives
    out again). What must survive is in .kept. a0-a3 are the start's. */
 

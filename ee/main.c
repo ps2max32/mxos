@@ -287,6 +287,25 @@ static void restart(void) {
   mx_di();
   kirq_off();
   mx__sif_dma_give(); /* the BIOS's SIF1 ring again, for whoever runs next */
+  if (restarts > 1) {
+    /* mx OS plan 2h-4c: after the first start (which sheds the loader's
+       threads and handlers by ExecPS2) the kernel starts itself again:
+       mxlink_start puts .data back, crt0 clears .bss and sets the stack, on
+       the BIOS thread it runs on (its threads and semaphores are its own:
+       none of the BIOS's to drop). In user mode, interrupts off, as
+       ExecPS2 starts it; .kept stays. */
+    static char *argv_kept[1] KEPT;
+    argv_kept[0] = boot_path;
+    mx_dcache_flush_all();
+    mx_icache_invalidate_all();
+    register u32 a0 __asm__("$4") = 1;
+    register char **a1 __asm__("$5") = argv_kept;
+    __asm__ volatile(".set push\n.set noreorder\njr %2\nnop\n.set pop"
+                     :
+                     : "r"(a0), "r"(a1), "r"(mxlink_start)
+                     : "memory");
+    __builtin_unreachable();
+  }
   mx_bios_exec_ps2(mxlink_start, _gp, 1, argv);
   for (;;)
     ;
@@ -893,6 +912,13 @@ static void emu_main(void) {
   con_init();
   u32 len = 0;
   int words = mx_sif_init() < 0 ? 0 : read_words("host:mxload.txt", args, sizeof args, &len);
+  /* a program's mx_loader_launch: that one next, after the restart, as main's
+     after_program does */
+  if (launch_argc && mx_sif_init() == 0) {
+    words = launch_argc, len = launch_len;
+    memcpy(args, launch_args, len < sizeof args ? len : sizeof args);
+    launch_argc = 0, launch_cleanup = 0;
+  }
   if (!words) {
     mx_printf("mxkernel: no host:mxload.txt\n");
     stopped();
