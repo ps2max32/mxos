@@ -135,12 +135,15 @@ static u32 kseg0(void (*f)(void)) { return 0x80000000u | ((u32)(uintptr_t)f & 0x
 /* maxsdk's stores to the SIF's DMA registers (sifdma.c): the syscall stays
    set after kirq_off, until the ExecPS2 */
 static void sif_poke(u32 a, u32 v) { kcall(a, v, 1); }
+/* and its reads of the BIOS's software registers (2h-4b) */
+static u32 sif_peek(u32 a) { return kcall(a, 0, 0); }
 
 void kirq_on(void) {
   if (on)
     return;
   mx_bios_set_syscall(POKE_SYSCALL, (void *)k_poke);
   mx__kpoke32 = sif_poke;
+  mx__kpeek32 = sif_peek;
   u32 intc = kcall(ENTRY_INTC, 0, 0), dmac = kcall(ENTRY_DMAC, 0, 0);
   u32 my_intc = kseg0(kirq_intc), my_dmac = kseg0(kirq_dmac);
   /* not ours already (a restart left them): the BIOS's */
