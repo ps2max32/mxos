@@ -328,6 +328,10 @@ void mx__sif_stuck(int where) {
            where == 1 ? "send" : "answer", d[0], d[1], d[2], d[3]);
   con_line(ROW_LAST + 2, CON_YELLOW, "SIF1 CHCR %08x TADR %08x QWC %x MADR %08x D_STAT %08x", d[4],
            d[5], d[6], d[7], MX_R32(MX_D_STAT));
+#ifdef MXLINK_EMU
+  mx_printf("mxkernel: SIF stuck (%s): own %u written %u cur %u CHCR %08x QWC %x\n",
+            where == 1 ? "send" : "answer", d[0], d[2], d[3], d[4], d[6]);
+#endif
 }
 
 int mxlink_crash(struct mx_crash *c) {
