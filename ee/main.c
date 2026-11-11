@@ -59,7 +59,6 @@ static s32 service_try KEPT = 0, service_off KEPT = 0;
 /* the BIOS's threads for the next program: one not built for kernel version
    10, which calls the BIOS's thread and semaphore syscalls itself (exec.c
    restarts mxlink so, and back after it) */
-static s32 bios_mode KEPT = 0;
 /* the relaunched program is the shell (exec_shell_next again after the restart) */
 static s32 launch_shell KEPT = 0;
 /* a program has ended and waits for the command thread (program_ended) */
@@ -345,24 +344,6 @@ int mxlink_crash(struct mx_crash *c) {
 static char parked_path[sizeof last_path];
 /* its path (kproc_list) */
 const char *parked_program(void) { return parked_path; }
-
-/* exec_elf: the program needs the other kind of threads (the kernel's or
-   the BIOS's): mxlink starts again in that mode and starts it then */
-void mxlink_relaunch(int bios, int argc, const char *args, u32 args_len, const char *swap) {
-  bios_mode = bios;
-  launch_shell = exec_shell_was();
-  u32 n = swap ? strlen(swap) : 0;
-  if (n >= sizeof launch_swap)
-    n = 0;
-  memcpy(launch_swap, swap ? swap : "", n);
-  launch_swap[n] = 0;
-  if (args_len > sizeof launch_args)
-    args_len = sizeof launch_args;
-  memcpy(launch_args, args, args_len);
-  launch_len = args_len;
-  launch_argc = argc;
-  restart();
-}
 
 /* in a service's thread: the program in launch_args started in front by the
    command thread, waited for: its process, -1 if it did not start */
@@ -856,18 +837,14 @@ static void emu_main(void) {
     stopped();
   }
   restarts = 1;
-  /* the kernel's threads, as main gives them, unless the program needs the
-     BIOS's: without them a program for kernel version 10 restarted mxlink
-     for them again and again (exec_elf) */
-  if (!bios_mode) {
-    kirq_on();
-    mx__sif_dma_take(); /* SIF1 through maxsdk's ring, not the BIOS's */
-    kvideo_init();      /* the video modes without SetGsCrt */
-    ksched_init();
-    kmsg_init();
-    klog_init();
-    mx__timer_init();
-  }
+  /* the kernel's threads, as main gives them */
+  kirq_on();
+  mx__sif_dma_take(); /* SIF1 through maxsdk's ring, not the BIOS's */
+  kvideo_init();      /* the video modes without SetGsCrt */
+  ksched_init();
+  kmsg_init();
+  klog_init();
+  mx__timer_init();
   mx__fio_lock_init(); /* every process's threads use the file server */
   /* after the kernel's threads, as in main: a vblank handler the screen
      adds before them is the BIOS's, which the kernel's interrupt entry
@@ -917,18 +894,15 @@ int main(int argc, char **argv) {
     restart();
   }
 
-  /* the kernel's interrupt entry and threads (mx OS plan, step 2d), unless
-     the next program needs the BIOS's (bios_mode: it has no kernel note of
-     version 10) */
-  if (!bios_mode) {
-    kirq_on();
-    mx__sif_dma_take(); /* SIF1 through maxsdk's ring, not the BIOS's */
-    kvideo_init();      /* the video modes without SetGsCrt */
-    ksched_init();
-    kmsg_init();
-    klog_init();
-    mx__timer_init();
-  }
+  /* the kernel's interrupt entry and threads (mx OS plan, step 2d): every
+     program is an MXOS one (2h-2) */
+  kirq_on();
+  mx__sif_dma_take(); /* SIF1 through maxsdk's ring, not the BIOS's */
+  kvideo_init();      /* the video modes without SetGsCrt */
+  ksched_init();
+  kmsg_init();
+  klog_init();
+  mx__timer_init();
   mx__fio_lock_init(); /* every process's threads use the file server */
   con_init();
   screen();

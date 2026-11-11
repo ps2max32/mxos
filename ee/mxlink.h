@@ -155,8 +155,6 @@ void exec_kill(void);
 void tlb_restore(void);
 /* kirq.c: the kernel first at INTC and DMAC interrupts (step 2d-1) */
 void kirq_on(void);
-void mxlink_relaunch(int bios, int argc, const char *args, u32 args_len, const char *swap)
-    __attribute__((noreturn));
 void kirq_off(void);
 /* before a program: the BIOS thread's SetupThread arguments none (kirq.c) */
 void kirq_setup_args_clear(void);
@@ -184,8 +182,6 @@ void mxlink_restart(void) __attribute__((noreturn));
 /* a program's return (<mx/loader.h>'s ret): mxlink started again, the IOP
    kept when the program left it as it was */
 void mxlink_return(int status) __attribute__((noreturn));
-/* syscall 4 (the BIOS's Exit) for the programs that do not call it (hook.S) */
-void mxlink_exit_hook(void);
 /* the path of the program started, for the screen after its return */
 void exec_started(const char *path);
 /* A program's mx_loader_launch: mxlink restarts and starts that program,

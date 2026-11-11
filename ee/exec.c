@@ -556,6 +556,10 @@ static const struct mxk_services kernel = {
    arguments, which copies them over this kernel and starts the new one. */
 static int exec_replace(int fd, const char *path, const struct ehdr *eh, const struct phdr *ph) {
   extern char kreplace_tramp[], kreplace_tramp_end[];
+  /* the BIOS's mappings, ASID 0: after a program with VM the frames' cached
+     entries are gone, and the stage and the trampoline are in frames (a
+     replace after k44 crashed so, and the old kernel went on) */
+  tlb_restore();
   volatile u32 *t = (volatile u32 *)(uintptr_t)KREPLACE_TABLE;
   u32 n = 0, stage = KREPLACE_STAGE, bytes = 0;
   for (u32 i = 0; i < eh->phnum; i++) {
@@ -651,26 +655,23 @@ int exec_elf(int argc, const char *args, u32 args_len) {
       return fail(fd, path, "it would overwrite the kernel");
     }
   }
-  if (loader && vm)
-    return fail(fd, path, "a loader (below 1 MiB) with VM segments");
-  if (over_self)
+  if (over_self && !vm)
     return exec_replace(fd, path, &eh, ph);
+  /* mx OS plan 2h-2: the kernel runs MXOS programs only (libmxk, kernel
+     version 10 or later), and other kernels (above); a standalone ELF (libmx,
+     ps2sdk's, a loader such as ps2link) is started by mxboot or a legacy
+     loader instead */
+  if (loader)
+    return fail(fd, path, "a loader (below 1 MiB): not an MXOS program");
   /* step 2b: a libmxk program of version 9 with VM, its core at a physical
      run of its own (core_place), from here, so that the load goes there */
   u32 *core_off_at = 0, heap = 0, version = 0;
   core_moved = 0;
   core_vm = vm;
-  if (!loader)
-    core_off_at = mxk_note(fd, ph, eh.phnum, &heap, &version);
-  /* step 2d: a program built for kernel version 10 runs on the kernel's
-     threads, any other on the BIOS's; mxlink starts again in the mode it
-     needs, and starts it then */
-  if (!loader && (version >= 10) != ksched_active()) {
-    mx_fio_close(fd);
-    con_log(CON_GREY, "  %s: the kernel starts again with %s threads", path,
-            version >= 10 ? "the kernel's" : "the BIOS's");
-    mxlink_relaunch(version < 10, argc, args, args_len, next_swap);
-  }
+  core_off_at = mxk_note(fd, ph, eh.phnum, &heap, &version);
+  if (version < 10)
+    return fail(fd, path, "not an MXOS program (libmxk): a standalone ELF is started by mxboot or a "
+                          "legacy loader");
   if (self_end > LOW)
     core_off_at = 0;
   int note_v9 = core_off_at != 0;
@@ -731,19 +732,6 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   mx_dcache_flush_all();
   mx_icache_invalidate_all();
 
-  if (loader) {
-    /* a loader (another mxlink, ps2link, ...) gets the machine, as from a
-       boot loader: ExecPS2 resets the EE kernel (our threads and handlers
-       go; memory stays) and starts it with the arguments. mxlink-high
-       starts MXLINK.ELF so, for a test before it is installed. */
-    con_log(CON_YELLOW, "  a loader: started by ExecPS2, the kernel ends");
-    kirq_off();
-    mx_debug_flush();
-    tlb_writable();
-    mx__sif_dma_give();
-    mx_bios_exec_ps2((void *)(uintptr_t)eh.entry, 0, largs.args.argc, largs.args.argv);
-    return fail(-1, path, "ExecPS2 returned");
-  }
 
   /* what is there before it: the rest is the program's at its end (end.c) */
   /* on the kernel's threads a process of its own (step 2d-3) */
@@ -774,9 +762,6 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   next_swap = 0;
   largs.kernel_magic = self_end <= LOW ? MX_KERNEL_MAGIC : 0;
   largs.kernel = &kernel;
-  /* and for the others (ps2sdk's, older maxsdk ones): their Exit */
-  if (self_end <= LOW)
-    mx_bios_set_syscall(4, mxlink_exit_hook);
 
   program_note = 0;
   mx__fio_base(path);
