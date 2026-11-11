@@ -22,6 +22,7 @@
 #include <mx/vm.h>
 
 #include "ksched.h"
+#include "kreplace.h"
 #include "mxlink.h"
 
 struct ehdr {
@@ -548,6 +549,44 @@ static const struct mxk_services kernel = {
     .phys_write = kmem_write,
 };
 
+/* Another kernel in place of this one (mx OS plan 2h-2; before, a new kernel
+   was tried as mxkernel-high, a loader started at 0x1E0_0000): its segments
+   are read to KREPLACE_STAGE, a table of them and kreplace.S's trampoline go
+   to KREPLACE_AT, and ExecPS2 starts the trampoline there with the
+   arguments, which copies them over this kernel and starts the new one. */
+static int exec_replace(int fd, const char *path, const struct ehdr *eh, const struct phdr *ph) {
+  extern char kreplace_tramp[], kreplace_tramp_end[];
+  volatile u32 *t = (volatile u32 *)(uintptr_t)KREPLACE_TABLE;
+  u32 n = 0, stage = KREPLACE_STAGE, bytes = 0;
+  for (u32 i = 0; i < eh->phnum; i++) {
+    const struct phdr *p = &ph[i];
+    if (p->type != PT_LOAD || p->memsz == 0)
+      continue;
+    if (n == KREPLACE_MAX)
+      return fail(fd, path, "too many segments for a kernel");
+    if (p->filesz && (mx_fio_lseek(fd, (s32)p->offset, MX_FIO_SEEK_SET) != (int)p->offset ||
+                      mx_fio_read(fd, (void *)(uintptr_t)stage, p->filesz) != (int)p->filesz))
+      return fail(fd, path, "cannot read a segment");
+    t[2 + 4 * n] = p->vaddr, t[3 + 4 * n] = stage, t[4 + 4 * n] = p->filesz;
+    t[5 + 4 * n] = p->memsz;
+    stage = (stage + p->filesz + 63) & ~63u;
+    bytes += p->memsz;
+    n++;
+  }
+  mx_fio_close(fd);
+  t[0] = n, t[1] = eh->entry;
+  memcpy((void *)(uintptr_t)KREPLACE_AT, kreplace_tramp, (u32)(kreplace_tramp_end - kreplace_tramp));
+  con_log(CON_YELLOW, "  a kernel (%u KiB, entry %08x): it replaces this one", bytes >> 10, eh->entry);
+  kirq_off();
+  mx_debug_flush();
+  tlb_writable();
+  mx__sif_dma_give();
+  mx_dcache_flush_all();
+  mx_icache_invalidate_all();
+  mx_bios_exec_ps2((void *)KREPLACE_AT, 0, largs.args.argc, largs.args.argv);
+  return fail(-1, path, "ExecPS2 returned");
+}
+
 int exec_elf(int argc, const char *args, u32 args_len) {
   if (user_tid) {
     con_log(CON_RED, "a program is running already");
@@ -582,7 +621,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   /* check all before loading any: a bad one leaves memory as it was */
   u32 self_start, self_end;
   exec_self(&self_start, &self_end);
-  int vm = 0, loader = 0;
+  int vm = 0, loader = 0, over_self = 0;
   for (u32 i = 0; i < eh.phnum; i++) {
     const struct phdr *p = &ph[i];
     if (p->type != PT_LOAD || p->memsz == 0)
@@ -603,6 +642,10 @@ int exec_elf(int argc, const char *args, u32 args_len) {
        memory), its stack included: starting mxlink-high.elf from it hung
        the PS2 */
     if (p->vaddr < self_end && p->vaddr + p->memsz > self_start) {
+      if (p->vaddr < LOW) {
+        over_self = 1; /* below 1 MiB: another kernel, which replaces this one */
+        continue;
+      }
       con_log(CON_RED, "segment %u at %08x, %u bytes: over the kernel at %08x-%08x", i, p->vaddr,
               p->memsz, self_start, self_end);
       return fail(fd, path, "it would overwrite the kernel");
@@ -610,6 +653,8 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   }
   if (loader && vm)
     return fail(fd, path, "a loader (below 1 MiB) with VM segments");
+  if (over_self)
+    return exec_replace(fd, path, &eh, ph);
   /* step 2b: a libmxk program of version 9 with VM, its core at a physical
      run of its own (core_place), from here, so that the load goes there */
   u32 *core_off_at = 0, heap = 0, version = 0;

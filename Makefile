@@ -69,7 +69,7 @@ HIGH_LDFLAGS = --defsym=__mx_base=0x1E00000 --defsym=__mx_text=0x1E40000 --defsy
                --defsym=__mx_stack_size=0x4000
 
 OBJS = $(SRCS:%.c=$(OUT)/obj/%.o) $(OUT)/obj/hook.o $(OUT)/obj/kirq_s.o $(OUT)/obj/ksched_s.o \
-       $(OUT)/obj/kvu0.o
+       $(OUT)/obj/kvu0.o $(OUT)/obj/kreplace_s.o
 
 all: $(OUT)/MXKERNEL.ELF $(OUT)/iop/mxroot.irx modules
 modules: $(MODULES:%=$(OUT)/MXOS/%.irx) $(OUT)/MXOS/ps2link.irx $(OUT)/MXOS/chime.irx
@@ -82,6 +82,10 @@ $(OUT)/obj/%.o: ee/%.c ee/mxlink.h $(MX_HDRS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/obj/hook.o: ee/hook.S
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/obj/kreplace_s.o: ee/kreplace.S ee/kreplace.h
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
