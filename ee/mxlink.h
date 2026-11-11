@@ -160,6 +160,10 @@ void kirq_off(void);
    (mx OS plan step 2h-3) */
 void ksys_watch_set(u32 asid);
 const u32 *ksys_watch_end(void);
+/* the kernel's own BIOS syscalls since its boot (step 2h-4) */
+const u32 *ksys_kernel_counts(void);
+/* a syscall handler of the kernel's own (ksys.S; step 2h-4a): 0, or -1 */
+int ksys_set(int number, void *handler);
 /* before a program: the BIOS thread's SetupThread arguments none (kirq.c) */
 void kirq_setup_args_clear(void);
 void kirq_counts(u32 *intc, u32 *dmac);

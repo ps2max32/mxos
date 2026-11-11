@@ -786,7 +786,8 @@ void ksched_init(void) {
   ksched_cur = &m->c;
   extern char _gp[];
   struct thread_param ip = {0, (void *)idle, idle_stack, sizeof idle_stack, _gp, IDLE_PRIO, 0, 0, 0};
-  mx_bios_set_syscall(KSCHED_SYSCALL, (void *)ksched_switch_k);
+  if (ksys_set(KSCHED_SYSCALL, (void *)ksched_switch_k) < 0)
+    mx_bios_set_syscall(KSCHED_SYSCALL, (void *)ksched_switch_k);
   mx__kthreads = &ksched_kthreads;
   active = 1;
   idle_id = k_create_thread(&ip);

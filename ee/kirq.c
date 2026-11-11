@@ -36,6 +36,11 @@ void ksys_entry(void);
 u32 ksys_counts[256] __attribute__((section(".kept"))) = {0};
 u32 ksys_watch __attribute__((section(".kept"))) = 0x100;
 u32 ksys_orig __attribute__((section(".kept"))) = 0;
+/* the kernel's own, since its boot */
+u32 ksys_kcounts[256] __attribute__((section(".kept"))) = {0};
+/* the kernel's own syscall handlers, by |number| (2h-4a); 0: the BIOS's */
+u32 ksys_handlers[128];
+static int ksys_on; /* entry 8 is ksys.S */
 
 /* kirq.S's: the registers it keeps, its stack, the BIOS's handlers (kept
    over the restart: the table may still point here then) */
@@ -153,10 +158,47 @@ void kirq_on(void) {
   int was = mx_di();
   kcall(ENTRY_INTC, my_intc, 1);
   kcall(ENTRY_DMAC, my_dmac, 1);
-  if ((ksys_orig >> 28) == 8)
+  if ((ksys_orig >> 28) == 8) {
     kcall(ENTRY_SYSCALL, my_sys, 1);
+    ksys_on = 1;
+  }
   mx_irq_restore(was);
   on = 1;
+  /* the poke the kernel's own from now on (SetSyscall was its bootstrap) */
+  ksys_set(POKE_SYSCALL, (void *)k_poke);
+}
+
+/* A syscall handler of the kernel's own (2h-4a), run by ksys.S as the BIOS's
+   dispatcher runs a SetSyscall one. 0, or -1 while entry 8 is not ksys.S. */
+int ksys_set(int number, void *handler) {
+  if (!ksys_on)
+    return -1;
+  u32 n = (u32)(number < 0 ? -number : number) & 0x7F;
+  ksys_handlers[n] = (u32)(uintptr_t)handler;
+  mx_dcache_flush_all(); /* ksys.S reads the table through kseg0 */
+  return 0;
+}
+
+/* maxsdk's src/base/excset.c: the VM's and the exception code's handlers */
+int mx__kernel_syscall_set(int number, void *handler) { return ksys_set(number, handler); }
+
+/* the BIOS's exception table (0x8001_5340, by ExcCode: 1-3 the TLB's, 4-13
+   the others; the level 1 vectors jump through it) written by the kernel,
+   as SetVTLBRefillHandler and SetVCommonHandler do (2h-4a). A handler below
+   32 MiB goes in through kseg0: the vectors run at EXL = 1. */
+#define EXC_TABLE 0x80015340u
+int mx__kernel_handler_set(int code, void (*handler)(void), void **old) {
+  if (!ksys_on || code < 1 || code > 13 || code == 8)
+    return -1;
+  u32 h = (u32)(uintptr_t)handler;
+  if (h < 0x02000000u)
+    h |= 0x80000000u;
+  u32 a = EXC_TABLE + 4 * (u32)code;
+  int was = mx_di();
+  *old = (void *)(uintptr_t)kcall(a, 0, 0);
+  kcall(a, h, 1);
+  mx_irq_restore(was);
+  return 0;
 }
 
 /* The program started now is watched (its ASID; 0 at its own addresses):
@@ -166,6 +208,12 @@ void ksys_watch_set(u32 asid) {
     ksys_counts[i] = 0;
   ksys_watch = asid & 0xFF;
   mx_dcache_flush_all();
+}
+
+/* the kernel's own counts since its boot (256, by v1 & 0xFF) */
+const u32 *ksys_kernel_counts(void) {
+  mx_dcache_flush_all();
+  return ksys_kcounts;
 }
 
 /* The program watched has ended: no more counting; its counts (256, by
@@ -189,6 +237,9 @@ void kirq_off(void) {
     kcall(ENTRY_SYSCALL, ksys_orig, 1);
   mx_irq_restore(was);
   on = 0;
+  ksys_on = 0;
+  for (int i = 0; i < 128; i++)
+    ksys_handlers[i] = 0;
 }
 
 /* The BIOS's SetupThread (docs/bios.md) copies into the argument block it is

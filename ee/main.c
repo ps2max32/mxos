@@ -235,16 +235,15 @@ const int mx__kernel_self = 1;
    plan step 2h-3; kirq.c, ksys.S), by number (an i-call's negative), with
    their counts, a few to a line: on the screen's log, or (log 0: before the
    screen, the emu build) the debug output. */
-static void bios_calls_report(int log) {
-  const u32 *n = ksys_watch_end();
+static void counts_report(const u32 *n, const char *what, int log) {
   char line[84];
   u32 len = 0, total = 0;
   for (int i = 0; i < 256; i++)
     total += n[i];
   if (log)
-    con_log(CON_GREY, "  BIOS syscalls: %u%s", total, total ? ", by number:" : "");
+    con_log(CON_GREY, "  %s: %u%s", what, total, total ? ", by number:" : "");
   else
-    mx_printf("mxkernel:   BIOS syscalls: %u%s\n", total, total ? ", by number:" : "");
+    mx_printf("mxkernel:   %s: %u%s\n", what, total, total ? ", by number:" : "");
   for (int i = 0; i < 256; i++) {
     if (!n[i])
       continue;
@@ -264,6 +263,12 @@ static void bios_calls_report(int log) {
     else
       mx_printf("mxkernel:   %s\n", line);
   }
+}
+
+static void bios_calls_report(int log) {
+  counts_report(ksys_watch_end(), "BIOS syscalls", log);
+  /* the kernel's own (step 2h-4): the debug output only */
+  counts_report(ksys_kernel_counts(), "the kernel's own BIOS syscalls since its boot", 0);
 }
 
 static void restart(void) __attribute__((noreturn));
