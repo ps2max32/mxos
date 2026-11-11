@@ -9,8 +9,11 @@
 
    Both were read from the BIOS's code of one console. The BIOS decides on its
    own variables, set at its boot: the kernel only takes this path where they
-   are the ones of that console, else mx_video_set uses SetGsCrt as before. */
+   are the ones of that console; elsewhere (PCSX2) it calls the BIOS's
+   SetGsCrt itself for a mode the BIOS has, so that programs never do (mx OS
+   plan 2h-3). */
 
+#include <mx/bios.h>
 #include <mx/bits.h>
 #include <mx/crtc.h>
 #include <mx/hw/regs.h>
@@ -103,9 +106,33 @@ static int encoder(const struct mx_crtc *c, int hd_clock) {
   return err;
 }
 
+/* The BIOS's code of a mode it has (SetGsCrt's), found by its description
+   (<mx/crtc.h>'s, ffmd aside); 0 if it has none */
+static int bios_code(const struct mx_crtc *c) {
+  static const u8 codes[] = {0x02, 0x03, 0x50, 0x51, 0x52, 0x1A, 0x1B, 0x1C, 0x2A,
+                             0x2B, 0x2C, 0x2D, 0x3B, 0x3C, 0x3D, 0x3E, 0x4A, 0x4B};
+  for (u32 i = 0; i < sizeof codes; i++) {
+    const struct mx_crtc *d = mx_crtc_for_code(codes[i], c->interlace);
+    if (d && d->vck_hz == c->vck_hz && d->kind == c->kind && d->spml == c->spml &&
+        d->interlace == c->interlace && d->hs == c->hs && d->hbp == c->hbp &&
+        d->hact == c->hact && d->hfp == c->hfp && d->hseq == c->hseq && d->vs == c->vs &&
+        d->vbpe == c->vbpe && d->vbp == c->vbp && d->vdp == c->vdp && d->vfpe == c->vfpe &&
+        d->vfp == c->vfp)
+      return codes[i];
+  }
+  return 0;
+}
+
 int kvideo_crtc_set(const struct mx_crtc *c) {
   struct mx_crtc_regs r;
-  if (!known || !kirq_is_on() || mx_crtc_regs(c, &r))
+  if (!known) {
+    int code = bios_code(c);
+    if (!code)
+      return -1;
+    mx_bios_set_gs_crt(c->interlace, code, c->ffmd);
+    return 0;
+  }
+  if (!kirq_is_on() || mx_crtc_regs(c, &r))
     return -1;
   u64 prst = MX_SET(GS_SMODE1_PRST, 1), sint = MX_SET(GS_SMODE1_SINT, 1);
   u64 s1 = r.smode1 & ~(prst | sint);
