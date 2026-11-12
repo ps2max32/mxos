@@ -474,6 +474,11 @@ static int launch(int argc, const char *args, u32 args_len, const char *swap, in
   if (mx_bios_get_thread_id() != cmd_thread_id() && exec_park(beside != 0) == 0) {
     memcpy(parked_top(), last_path, sizeof last_path);
     pads_close();
+    /* the modules this one loaded (the shell's USB drivers) stay for it: the
+       other's end keeps the IOP when that loaded none of its own; else its
+       reset and the restart ended this one too */
+    if (iop_last)
+      iop_last = mx_iop_last_module();
     exec_swap(launch_swap[0] ? launch_swap : 0);
     exec_park_wait_set();
     cmd_launch(argc, launch_args, launch_len);
