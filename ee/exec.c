@@ -443,9 +443,10 @@ int exec_park_status(void) { return park_status; }
    2e-2, kproc.c): its other threads go on beside the other program, its
    core's TLB entries kept. */
 int exec_park(int beside) {
-  /* above another only beside: one that waits above a service crashed at
-     once (its stack in the next one's core); it takes the restart's way */
-  if (npark == MAX_PARK || (npark && !beside) || !core_moved || !on_libmxk ||
+  /* one without VM waits above another only beside: it crashed at once
+     (its stack in the next one's core) and takes the restart's way; one
+     with VM waits above a service as alone (its core pinned frames) */
+  if (npark == MAX_PARK || (npark && !beside && !core_vm) || !core_moved || !on_libmxk ||
       !end_tables_known())
     return -1;
   struct park_slot *q = &parks[npark];
