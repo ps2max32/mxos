@@ -264,7 +264,8 @@ static void cmd_thread(void *arg) {
         mxlink_takeover((int)be32(p + HDR), (const char *)p + HDR + 4, PKO_MAX_PATH);
       if (!exec_running())
         mxlink_host_run();
-      exec_elf((int)be32(p + HDR), (const char *)p + HDR + 4, PKO_MAX_PATH);
+      if (exec_elf((int)be32(p + HDR), (const char *)p + HDR + 4, PKO_MAX_PATH) < 0)
+        mx_printf("@@PS2TEST_END@@ status=127\n"); /* refused: the run's end */
       break;
     case PKO_SCRDUMP_CMD:
     case PKO_NETDUMP_CMD:
