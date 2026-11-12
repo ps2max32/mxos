@@ -723,10 +723,14 @@ static void close_sockets(void) {
 static u32 timeouts_before;
 static int iop_silent(void) { return mx__sif_timeouts != timeouts_before; }
 
+int mx__vm_uses_fd(int fd);
 static void iop_cleanup(void) {
-  /* descriptors 0-2 are the tty's */
+  /* descriptors 0-2 are the tty's; the VM's (its swap file, the ELF and
+     mapped files of the programs that go on: a service, one that waits)
+     stay */
   for (int fd = 3; fd < 32 && !iop_silent(); fd++)
-    mx_fio_close(fd);
+    if (!mx__vm_uses_fd(fd))
+      mx_fio_close(fd);
   if (iop_silent())
     return;
   mx__mxio_cleanup();
