@@ -518,6 +518,7 @@ static const struct mxk_services kernel = {
     .gs_mode = home_gs_mode,
     .crtc_set = kvideo_crtc_set,
     .iop_write = mx__iop_write_phys,
+    .board_offset = kvideo_board_offset,
     .home_wanted = home_wanted,
     .home_run = home_run,
     .irq_tables = end_irq_tables,

@@ -176,6 +176,7 @@ void kpoke16(u32 a, u32 v);
 struct mx_crtc;
 void kvideo_init(void);
 int kvideo_crtc_set(const struct mx_crtc *c);
+void kvideo_board_offset(int code, int *dx, int *dy);
 int tlb_core_map(u32 va_end, u32 off);
 #ifdef MXLINK_EMU
 void tlb_emu_asid(u32 asid);

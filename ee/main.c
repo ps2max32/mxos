@@ -255,7 +255,7 @@ static void counts_report(const u32 *n, const char *what, int log) {
       len = 0;
     }
     len += (u32)mx_snprintf(line + len, sizeof line - len, "%s%s%02x x%u", len ? ", " : "",
-                            i >= 0x80 ? "-" : "", i >= 0x80 ? 256 - i : i, n[i]);
+                            i > 0x80 ? "-" : "", i > 0x80 ? 256 - i : i, n[i]); /* 0x80: GetGsDxDyOffset */
   }
   if (len) {
     if (log)

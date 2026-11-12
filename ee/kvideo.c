@@ -42,6 +42,9 @@
 #define ENC_DEV 0x42
 
 static int known;
+/* the BIOS has GetGsDxDyOffset: a ROM after 2001-06-08 (ROMVER's date) */
+static int has_dxdy;
+#define ROMVER_DATE 0xBFC7FF54u /* YYYYMMDD, in ROMVER (VVVVRTYYYYMMDD) */
 
 void kvideo_init(void) {
   if (!kirq_is_on())
@@ -50,6 +53,10 @@ void kvideo_init(void) {
   u32 enc = kpeek32(BIOS_ENCODER) & 0xFF;
   known = variant == 0 && board == 0x32 && enc == 0x1C;
   mx__crtc_set = kvideo_crtc_set;
+  u32 date = 0;
+  for (u32 i = 0; i < 8; i++)
+    date = date * 10 + (((kpeek32((ROMVER_DATE + i) & ~3u) >> ((ROMVER_DATE + i) & 3) * 8) & 0xFF) - '0');
+  has_dxdy = date > 20010608;
   if (!known)
     con_log(CON_YELLOW, "video: a console not known (%x %x %x): the BIOS's SetGsCrt", variant,
             board, enc);
@@ -121,6 +128,18 @@ static int bios_code(const struct mx_crtc *c) {
       return codes[i];
   }
   return 0;
+}
+
+/* kernel version 23: the board's offsets of a mode's active area for a program
+   (mx_video_board_offset), which makes no BIOS calls: the BIOS's
+   GetGsDxDyOffset, into the kernel's own variables (the BIOS writes them in
+   kernel mode: not the caller's memory, which may be VM) */
+void kvideo_board_offset(int code, int *dx, int *dy) {
+  int x = 0, y = 0, w, h;
+  if (has_dxdy)
+    mx_bios_get_gs_dxdy_offset(code, &x, &y, &w, &h);
+  *dx = x;
+  *dy = y;
 }
 
 int kvideo_crtc_set(const struct mx_crtc *c) {
