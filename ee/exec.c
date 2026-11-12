@@ -93,7 +93,9 @@ int exec_resident(void) {
 }
 
 /* The program ended without the restart (main.c): its thread is gone. */
+static void kvm_front_gone(void);
 void exec_ended(void) {
+  kvm_front_gone();
   exec_park_forget();
   core_moved = 0;
   user_tid = 0;
@@ -357,6 +359,7 @@ void exec_park_start_failed(void) {
 }
 /* the command thread: the program in front ended, the service stays */
 void exec_front_ended(int status) {
+  kvm_front_gone(); /* also when it did not end by its mx_exit (a kill, a crash) */
   last_child = park.child, last_child_status = status;
   if (park.child > 0) {
     struct mx_event e = {MX_EVENT_END, park.child, status, 0};
