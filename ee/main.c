@@ -373,6 +373,9 @@ int end_pending(void) { return ending; }
 /* start.c: no BIOS thread or heap set-up after the kernel's own restart
    (2h-4e-1) */
 int mx__kernel_kept(void) { return kirq_kept(); }
+/* start.c, at the first start: the kernel's vectors before its exception
+   handlers are set (they go into its tables), no SetupHeap (2h-4e-2) */
+void mx__kernel_early(void) { kirq_on(); }
 
 /* exception.c, after the report of a crash: one of a program the kernel
    started ends that program as its own mx_exit(255) would (the kernel's
