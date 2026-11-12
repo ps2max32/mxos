@@ -44,6 +44,14 @@
 static int known;
 /* the BIOS has GetGsDxDyOffset: a ROM after 2001-06-08 (ROMVER's date) */
 static int has_dxdy;
+/* the BIOS's GetGsDxDyOffset of every mode code it knows (2 to 0x73), asked
+   once at the kernel's start and kept (mx OS plan 2h-5: the BIOS's memory,
+   which the call reads, becomes the kernel's; its table depends on the GS's
+   revision and the BIOS's boot): dx, dy */
+#define DXDY_FIRST 2
+#define DXDY_N 0x72
+static s16 dxdy[DXDY_N][2] __attribute__((section(".kept")));
+static int dxdy_known __attribute__((section(".kept")));
 #define ROMVER_DATE 0xBFC7FF54u /* YYYYMMDD, in ROMVER (VVVVRTYYYYMMDD) */
 
 void kvideo_init(void) {
@@ -57,6 +65,14 @@ void kvideo_init(void) {
   for (u32 i = 0; i < 8; i++)
     date = date * 10 + (((kpeek32((ROMVER_DATE + i) & ~3u) >> ((ROMVER_DATE + i) & 3) * 8) & 0xFF) - '0');
   has_dxdy = date > 20010608;
+  if (has_dxdy && !dxdy_known) {
+    for (int i = 0; i < DXDY_N; i++) {
+      int x = 0, y = 0, w, h;
+      mx_bios_get_gs_dxdy_offset(DXDY_FIRST + i, &x, &y, &w, &h);
+      dxdy[i][0] = (s16)x, dxdy[i][1] = (s16)y;
+    }
+    dxdy_known = 1;
+  }
   if (!known)
     con_log(CON_YELLOW, "video: a console not known (%x %x %x): the BIOS's SetGsCrt", variant,
             board, enc);
@@ -132,14 +148,13 @@ static int bios_code(const struct mx_crtc *c) {
 
 /* kernel version 23: the board's offsets of a mode's active area for a program
    (mx_video_board_offset), which makes no BIOS calls: the BIOS's
-   GetGsDxDyOffset, into the kernel's own variables (the BIOS writes them in
-   kernel mode: not the caller's memory, which may be VM) */
+   GetGsDxDyOffset as asked at the kernel's start (dxdy); 0, 0 for a code it
+   does not know, or on a ROM without the call */
 void kvideo_board_offset(int code, int *dx, int *dy) {
-  int x = 0, y = 0, w, h;
-  if (has_dxdy)
-    mx_bios_get_gs_dxdy_offset(code, &x, &y, &w, &h);
-  *dx = x;
-  *dy = y;
+  u32 i = (u32)(code - DXDY_FIRST);
+  int ok = dxdy_known && i < DXDY_N;
+  *dx = ok ? dxdy[i][0] : 0;
+  *dy = ok ? dxdy[i][1] : 0;
 }
 
 int kvideo_crtc_set(const struct mx_crtc *c) {
