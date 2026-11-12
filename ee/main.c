@@ -297,7 +297,7 @@ static void restart(void) {
      and its interrupt entry sends them to the BIOS's handlers until
      ksched_init */
   mx_di();
-  if (restarts > 1)
+  if (kirq_is_on())
     kirq_keep();
   else
     kirq_off();
@@ -1023,17 +1023,6 @@ int main(int argc, char **argv) {
 #ifdef MXLINK_EMU
   emu_main();
 #endif
-  if (!restarts) {
-    /* the first start: the loader's IOP, its threads and handlers */
-    u32 n = argc > 0 && argv[0] ? strlen(argv[0]) : 0;
-    if (n >= sizeof boot_path)
-      n = 0;
-    memcpy(boot_path, n ? argv[0] : "", n);
-    boot_path[n] = 0;
-    read_conf();
-    restart();
-  }
-
   /* the kernel's interrupt entry and threads (mx OS plan, step 2d): every
      program is an MXOS one (2h-2) */
   kirq_on();
@@ -1044,6 +1033,20 @@ int main(int argc, char **argv) {
   klog_init();
   mx__timer_init();
   mx__fio_lock_init(); /* every process's threads use the file server */
+  if (!restarts) {
+    /* the first start: the loader's IOP, its threads and handlers. Its
+       configuration read through the kernel's own threads and SIF ring
+       (2h-4e-2: no BIOS calls after the first kirq_on but the poke's
+       bootstrap); the restart keeps the vectors (kirq_keep), so the start
+       after it makes none either */
+    u32 n = argc > 0 && argv[0] ? strlen(argv[0]) : 0;
+    if (n >= sizeof boot_path)
+      n = 0;
+    memcpy(boot_path, n ? argv[0] : "", n);
+    boot_path[n] = 0;
+    read_conf();
+    restart();
+  }
   con_init();
   screen();
   status_state(ST_BOOT, "IOP");
