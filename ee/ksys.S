@@ -16,14 +16,17 @@
    ksys_set: the scheduler's switch, the poke, the VM's resume) run here, as
    the BIOS's dispatcher runs a SetSyscall handler, so that the handlers are
    the same:
-   - a positive number: the caller's sp, ra and at in the vector's save area
-     (0x8000_10C0), Status's ERL and KSU cleared (EXL stays), the BIOS's
-     kernel stack (0x8001_8E70: ra, the caller's sp, EPC + 4), EPC + 4; back
-     with Status | 0x13 (user mode, EXL, IE) by ERET;
+   - a positive number: the caller's sp, ra and at in the kernel's save area
+     (kvec_save; the BIOS's dispatcher uses 0x8000_10C0), Status's ERL and
+     KSU cleared (EXL stays), on the kernel's stack (ksys_stack; the BIOS's
+     is at 0x8001_8E70) a frame as the BIOS's: ra, the caller's sp, EPC + 4;
+     EPC + 4; back with Status | 0x13 (user mode, EXL, IE) by ERET (2h-4d-2);
    - a negative number (an i-call): v1 made positive, a 16-byte frame on the
      caller's stack (ra, EPC + 4), EPC + 4; back by ERET, Status as it is.
    Any other number goes on into the BIOS's dispatcher (ksys_orig), which
    needs nothing of k0, k1. */
+
+#include "ksched.h"
 
 	.set noreorder
 	.set noat
@@ -71,19 +74,18 @@ ksys_entry:
 	nop
 
 	/* a positive number, as the BIOS's dispatcher (0x8000_029C) */
-	lui $27, 0x8000
-	sq $29, 0x10c0($27)
-	sq $31, 0x10d0($27)
-	sq $1, 0x10e0($27)
+	lui $27, %hi(kvec_save + 0x80000000)
+	sq $29, %lo(kvec_save + 0x80000000)($27)
+	sq $31, %lo(kvec_save + 0x80000010)($27)
+	sq $1, %lo(kvec_save + 0x80000020)($27)
 	mfc0 $1, $12
 	addiu $27, $0, -0x1c
 	and $1, $1, $27
 	mtc0 $1, $12
 	sync.p
 	move $27, $29
-	lui $29, 0x8002
-	addiu $29, $29, -0x7180
-	addiu $29, $29, -0x10
+	lui $29, %hi(ksys_stack + KSYS_STACK - 0x10)
+	addiu $29, $29, %lo(ksys_stack + KSYS_STACK - 0x10)
 	sw $31, 0($29)
 	sw $27, 4($29)
 	mfc0 $27, $14

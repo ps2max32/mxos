@@ -1,6 +1,7 @@
 /* The kernel first at every INTC and DMAC interrupt (mx OS plan, step 2d;
    docs/bios.md). The interrupt vector (0x8000_0200: the kernel's, kvec.S,
-   as the BIOS's) saved sp, ra and at at 0x8000_10C0 and jumps through the
+   as the BIOS's) saved sp, ra and at in kvec_save (2h-4d-2; the BIOS's
+   at 0x8000_10C0) and jumps through the
    kernel's table (kvec_irq_table: INTC entry 2, DMAC entry 3), which
    kirq.c points here, through kseg0.
 
@@ -69,12 +70,13 @@ kirq_common:
 	sd $2, KR_LO1($27)
 	mfsa $2
 	sw $2, KR_SA($27)
-	lui $3, 0x8000
-	lq $2, 0x10C0($3)
+	lui $3, %hi(kvec_save)
+	addiu $3, $3, %lo(kvec_save)
+	lq $2, 0($3)
 	sq $2, KR_SP($27)
-	lq $2, 0x10D0($3)
+	lq $2, 16($3)
 	sq $2, KR_RA($27)
-	lq $2, 0x10E0($3)
+	lq $2, 32($3)
 	sq $2, KR_AT($27)
 	mfc0 $5, $14
 	sw $5, KR_EPC($27)

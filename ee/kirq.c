@@ -30,6 +30,8 @@
 void kirq_intc(void);
 void kirq_dmac(void);
 void ksys_entry(void);
+void kvec_irq_bios(void);
+void mx__exception_vector(void);
 
 /* kvec.S's vectors and the tables they jump through (through kseg0; by
    ExcCode, by interrupt line), and where t9 waits meanwhile */
@@ -37,6 +39,13 @@ extern const u32 kvec_exc[], kvec_exc_end[], kvec_irq[], kvec_irq_end[];
 u32 kvec_exc_table[16] __attribute__((aligned(64)));
 u32 kvec_irq_table[8] __attribute__((aligned(64)));
 u64 kvec_t9 __attribute__((aligned(64)));
+/* the interrupted (or calling) thread's sp, ra and at, as the BIOS's save
+   area at 0x8000_10C0 has them, and kvec_irq_bios's word (2h-4d-2); the
+   BIOS's handlers of the lines that are not the kernel's */
+u32 kvec_save[16] __attribute__((aligned(64)));
+u32 kvec_irq_orig[8] __attribute__((aligned(64)));
+/* ksys.S's stack for the kernel's own syscalls (the BIOS's at 0x8001_8E70) */
+u8 ksys_stack[KSYS_STACK] __attribute__((aligned(16)));
 /* the vectors: TLB refill, common, interrupt; the BIOS's code there (kept
    over the restart, which puts it back first) */
 #define VEC_BYTES 0x80u
@@ -76,6 +85,12 @@ u32 kirq(int line, u32 epc) {
 void kirq_counts(u32 *intc, u32 *dmac) {
   *intc = counts[0];
   *dmac = counts[1];
+}
+
+/* the interrupts kvec_irq_bios sent on to the BIOS's handlers (2h-4d-2) */
+u32 kirq_bios_count(void) {
+  mx_dcache_flush_all(); /* the stub counts through kseg0 */
+  return kvec_save[13];
 }
 
 /* kernel memory written or read in kernel mode, by a syscall handler: op 0
@@ -220,6 +235,22 @@ void kirq_on(void) {
   kvec_irq_table[2] = my_intc;
   kvec_irq_table[3] = my_dmac;
   kvec_exc_table[8] = my_sys;
+  /* the other lines with a handler (the COP0 timer's, 7; the BIOS has none
+     of the rest, docs/bios.md) to the BIOS's handlers through
+     kvec_irq_bios, which gives them the BIOS's save area and counts them
+     (2h-4d-2) */
+  for (int i = 0; i < 8; i++)
+    if (i != 2 && i != 3 && kvec_irq_table[i]) {
+      kvec_irq_orig[i] = kvec_irq_table[i];
+      kvec_irq_table[i] = kseg0(kvec_irq_bios);
+    }
+  /* the exception codes the BIOS leaves to its default handler (its "does
+     not exist" and a break): 0 (never through the common vector), 11 (a
+     coprocessor unusable) and 14, 15 (none on the R5900; the BIOS's table
+     keeps t9 there) to the kernel's crash report, as the others (start.c's
+     mx_exception_init set those before) */
+  kvec_exc_table[0] = kvec_exc_table[11] = kvec_exc_table[14] = kvec_exc_table[15] =
+      kseg0(mx__exception_vector);
   /* the BIOS's vectors kept (unless they are the kernel's: left by a crash
      before kirq_off, the copy is the one before) */
   for (int i = 0; i < 3; i++) {

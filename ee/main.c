@@ -357,6 +357,15 @@ void mxlink_return(int status) {
 
 int end_pending(void) { return ending; }
 
+/* exception.c, after the report of a crash: one of a program the kernel
+   started ends that program as its own mx_exit(255) would (the kernel's
+   mx_exit has no way back: the BIOS's Exit, a reset, when PCSX2 started the
+   kernel) */
+void mx__crash_end(int status) {
+  if (exec_running())
+    mxlink_return(status);
+}
+
 /* In the report of exception.c, on the kernel's stack. */
 void mx__crash_kept(struct mx_crash *c) {
   const char *const *np = exec_note();
@@ -1093,7 +1102,8 @@ void program_ended(void) {
   con_log(CON_GREY, "ended without a restart: %u threads, %u semaphores", threads, semas);
   u32 n_intc, n_dmac;
   kirq_counts(&n_intc, &n_dmac);
-  con_log(CON_GREY, "the kernel first at %u INTC and %u DMAC interrupts", n_intc, n_dmac);
+  con_log(CON_GREY, "the kernel first at %u INTC and %u DMAC interrupts (%u others to the BIOS)",
+          n_intc, n_dmac, kirq_bios_count());
   if (threads_left || semas_left || calls_left)
     con_log(CON_RED, "the end left %u threads, %u semaphores, %u IOP calls, %u RPC packets",
             threads_left, semas_left, calls_left & 0xFF, calls_left >> 8);

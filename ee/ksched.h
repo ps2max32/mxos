@@ -2,6 +2,9 @@
 #ifndef KSCHED_H
 #define KSCHED_H
 
+/* the kernel's syscall stack (ksys.S, kirq.c's ksys_stack: 2h-4d-2) */
+#define KSYS_STACK 4096
+
 /* a thread's context (struct kctx): the GPRs at KC_R + 16 n (zero, k0 and
    k1 unused), HI/LO, HI1/LO1, SA, EPC, IE (the Status bit it runs with),
    the FPU's control register, f0-f31 and the accumulator. KC_IE holds the

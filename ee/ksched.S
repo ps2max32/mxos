@@ -173,10 +173,10 @@ kctx_resume:
 	.end kctx_resume
 	.size kctx_resume, .-kctx_resume
 
-/* ---- the switch syscall (KSCHED_SYSCALL): the BIOS's dispatcher runs it in
-   kernel mode on its stack, interrupts off; the caller's sp, ra and at are
-   in the vector's save area (0x8000_10C0), the address after the syscall at
-   8($sp), v1 was the number. The caller's context saved, ksched_pick()
+/* ---- the switch syscall (KSCHED_SYSCALL): ksys.S runs it as the BIOS's
+   dispatcher would, in kernel mode on its stack, interrupts off; the
+   caller's sp, ra and at are in the kernel's save area (kvec_save,
+   2h-4d-2), the address after the syscall at 8($sp), v1 was the number. The caller's context saved, ksched_pick()
    chooses, kctx_resume goes on with that one. */
 	.globl ksched_switch_k
 	.type ksched_switch_k, @function
@@ -209,12 +209,13 @@ ksched_switch_k:
 	sq $25, KC_R + 0x190($26)
 	sq $28, KC_R + 0x1C0($26)
 	sq $30, KC_R + 0x1E0($26)
-	lui $27, 0x8000
-	lq $2, 0x10C0($27)
+	lui $27, %hi(kvec_save)
+	addiu $27, $27, %lo(kvec_save)
+	lq $2, 0($27)
 	sq $2, KC_R + 0x1D0($26)
-	lq $2, 0x10D0($27)
+	lq $2, 16($27)
 	sq $2, KC_R + 0x1F0($26)
-	lq $2, 0x10E0($27)
+	lq $2, 32($27)
 	sq $2, KC_R + 0x010($26)
 	lw $2, 8($29)
 	sw $2, KC_EPC($26)

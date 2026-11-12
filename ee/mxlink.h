@@ -167,6 +167,7 @@ int ksys_set(int number, void *handler);
 /* before a program: the BIOS thread's SetupThread arguments none (kirq.c) */
 void kirq_setup_args_clear(void);
 void kirq_counts(u32 *intc, u32 *dmac);
+u32 kirq_bios_count(void);
 int kirq_is_on(void);
 u32 kpeek32(u32 a);
 void kpoke32(u32 a, u32 v);
