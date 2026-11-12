@@ -124,6 +124,8 @@ void mx__vm_shutdown(void);
 void mx__vm_swap_close(void);
 void mx__vm_tlb_again(void);
 void mx__vm_tlb_fix(void);
+void mx__vm_swap_size(u32 bytes);
+const char *kswap_path(u32 *bytes);
 void *mx__vm_frames_take_aligned(u32 bytes, u32 align);
 void mx__vm_frames_give(void *p, u32 bytes);
 int exec_vm_kept(void);

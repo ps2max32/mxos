@@ -606,6 +606,10 @@ static void exception_setup(const char **note) {
 
 static void kernel_program(void *heap_lo, void *heap_hi, void *vm_lo, void *vm_hi) {
   on_libmxk = 1;
+  /* the swap file's size (plan 3c), before the program's mx_vm_init */
+  u32 swap_bytes = 0;
+  if (!vm_kept && kswap_path(&swap_bytes))
+    mx__vm_swap_size(swap_bytes);
   if (core_moved) {
     /* its ASID and core run since the load: the core heap ends with the
        run, the frames are below it */
@@ -913,7 +917,10 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   largs.ret = mxlink_return;
   largs.launch_magic = self_end <= LOW ? MX_LOADER_LAUNCH : 0;
   largs.launch = mxlink_launch;
-  largs.swap = program_swap = mx__loader_swap = next_swap;
+  /* the swap file: its launch's, else MXOS's (mc0:/MXOS/SWAP.CFG, plan 3c) */
+  u32 swap_bytes = 0;
+  const char *mxos_swap = kswap_path(&swap_bytes);
+  largs.swap = program_swap = mx__loader_swap = next_swap ? next_swap : mxos_swap;
   next_swap = 0;
   largs.kernel_magic = self_end <= LOW ? MX_KERNEL_MAGIC : 0;
   largs.kernel = &kernel;

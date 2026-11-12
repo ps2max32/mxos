@@ -863,6 +863,44 @@ static int read_words(const char *path, char *to, u32 max, u32 *len) {
   return words;
 }
 
+/* mx OS plan 3c: the one swap file of MXOS programs, mc0:/MXOS/SWAP.CFG (on
+   PCSX2 host:swap.txt): its path and, optionally, its size in MiB (64 by
+   default). A program without a swap file of its launch's gets it (in place
+   of the one it asks for); none without the file. Read once. */
+#ifdef MXLINK_EMU
+#define SWAP_CFG "host:swap.txt"
+#else
+#define SWAP_CFG MODULE_DIR "SWAP.CFG"
+#endif
+static char swap_path[64];
+static u32 swap_mib = 64;
+static int swap_read;
+const char *kswap_path(u32 *bytes) {
+  if (!swap_read) {
+#ifndef MXLINK_EMU
+    if (!card_ready())
+      return 0; /* again at the next program */
+#endif
+    swap_read = 1;
+    char w[96];
+    u32 len;
+    int n = read_words(SWAP_CFG, w, sizeof w, &len);
+    u32 l = n >= 1 ? strlen(w) : 0;
+    if (l && l < sizeof swap_path) {
+      memcpy(swap_path, w, l + 1);
+      u32 mib = 0;
+      for (const char *p = w + l + 1; n >= 2 && *p >= '0' && *p <= '9'; p++)
+        mib = mib * 10 + (u32)(*p - '0');
+      if (mib)
+        swap_mib = mib;
+      con_log(CON_GREY, "swap: %s, %u MiB", swap_path, swap_mib);
+    }
+  }
+  if (bytes)
+    *bytes = swap_mib << 20;
+  return swap_path[0] ? swap_path : 0;
+}
+
 /* the service started at the boot (kernel version 18): mc0:/MXOS/SERVICES.CFG
    (on PCSX2 host:services.txt), a path and its arguments; it calls
    mx_proc_service, and the program in front that comes next starts */
