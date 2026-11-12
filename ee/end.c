@@ -258,10 +258,27 @@ void end_cleanup(void) {
   mx_icache_invalidate_all();
 }
 
+/* The VM's part of it (vm.c, image.c: resident.ld's __vm_*): left as it
+   is while a program that waits or runs beside has VM (exec_vm_kept: the
+   address spaces are the VM's, mx OS plan 3a). Copies [lo, hi) of a
+   region, but that part. */
+extern char __vm_data_start[], __vm_data_end[], __vm_bss_start[], __vm_bss_end[];
+static void copy_but_vm(u8 *to, const u8 *from, char *lo, char *hi, char *vlo,
+                        char *vhi) {
+  u32 a = (u32)(vlo - lo), b = (u32)(vhi - lo), n = (u32)(hi - lo);
+  if (!exec_vm_kept())
+    a = b = n;
+  memcpy(to, from, a);
+  memcpy(to + b, from + b, n - b);
+}
 void end_reset_state(void) {
-  memcpy(__prog_data_start, __data_copy + (__prog_data_start - __data_start),
-         (u32)(__prog_data_end - __prog_data_start));
-  memset(__prog_bss_start, 0, (u32)(__prog_bss_end - __prog_bss_start));
+  copy_but_vm((u8 *)__prog_data_start, (const u8 *)__data_copy + (__prog_data_start - __data_start),
+              __prog_data_start, __prog_data_end, __vm_data_start, __vm_data_end);
+  u32 n = (u32)(__prog_bss_end - __prog_bss_start), a = n, b = n;
+  if (exec_vm_kept())
+    a = (u32)(__vm_bss_start - __prog_bss_start), b = (u32)(__vm_bss_end - __prog_bss_start);
+  memset(__prog_bss_start, 0, a);
+  memset(__prog_bss_start + b, 0, n - b);
   tables_known = 0;
 }
 
@@ -372,8 +389,10 @@ u32 end_state_size(void) {
 }
 void end_state_save(void *to) {
   u32 d = (u32)(__prog_data_end - __prog_data_start);
-  memcpy(to, __prog_data_start, d);
-  memcpy((u8 *)to + d, __prog_bss_start, (u32)(__prog_bss_end - __prog_bss_start));
+  copy_but_vm(to, (const u8 *)__prog_data_start, __prog_data_start, __prog_data_end,
+              __vm_data_start, __vm_data_end);
+  copy_but_vm((u8 *)to + d, (const u8 *)__prog_bss_start, __prog_bss_start, __prog_bss_end,
+              __vm_bss_start, __vm_bss_end);
 }
 /* A process beside the one in front (kproc.c): its part of the state
    (__proc_*) exchanged with the live one, at the same place in the copy. */
@@ -395,6 +414,8 @@ void end_state_swap(void *copy) {
 }
 void end_state_load(const void *from) {
   u32 d = (u32)(__prog_data_end - __prog_data_start);
-  memcpy(__prog_data_start, from, d);
-  memcpy(__prog_bss_start, (const u8 *)from + d, (u32)(__prog_bss_end - __prog_bss_start));
+  copy_but_vm((u8 *)__prog_data_start, from, __prog_data_start, __prog_data_end, __vm_data_start,
+              __vm_data_end);
+  copy_but_vm((u8 *)__prog_bss_start, (const u8 *)from + d, __prog_bss_start, __prog_bss_end,
+              __vm_bss_start, __vm_bss_end);
 }

@@ -483,6 +483,10 @@ static int launch(int argc, const char *args, u32 args_len, const char *swap, in
   }
   if (beside)
     return -1;
+  /* in its place: its VM ends here (libmxk leaves it to the kernel, which
+     may keep it for a program that waits, phase 3a) */
+  mx__vm_shutdown();
+  mx__vm_swap_close();
   launch_argc = argc;
   launch_cleanup = 1;
   restart();
@@ -1093,7 +1097,14 @@ void end_kernel_clients(void) {
 void program_ended(void) {
   ending = 0;
   end_cleanup();
+  /* the VM of a program that waits or runs beside goes on (phase 3a): its
+     entries again over the BIOS's, before an interrupt (the VM's vblank)
+     reaches its tables */
+  int was = mx_di();
   tlb_restore();
+  if (exec_vm_kept())
+    mx__vm_tlb_again();
+  mx_irq_restore(was);
   kirq_on();
   /* the shell ended by the service: always the restart, as the takeover
      did (without it the next program crashed at once, before its first

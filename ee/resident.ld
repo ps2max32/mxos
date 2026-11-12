@@ -39,8 +39,13 @@ SECTIONS {
     *libmxkern.a:pad.c.o(.data .data.*)
     . = ALIGN(4);
     __proc_data_end = .;
+    /* the VM's (vm.c, image.c): kept, not set back, while a program that
+       waits or runs beside has VM (its address space, mx OS plan 3a) */
+    __vm_data_start = .;
     *libmxkern.a:vm.c.o(.data .data.*)
     *libmxkern.a:image.c.o(.data .data.*)
+    . = ALIGN(4);
+    __vm_data_end = .;
     *home.o(.data .data.*)
     __prog_data_end = .;
     *(.data .data.*)
@@ -83,12 +88,17 @@ SECTIONS {
     . = ALIGN(64);
     __proc_bss_end = .;
     *libmxkern.a:exception.c.o(.bss .bss.*)
+    . = ALIGN(64);
+    __vm_bss_start = .; /* as __vm_data_start */
     *libmxkern.a:vm.c.o(.bss.mx.lines)
     *libmxkern.a:image.c.o(.bss.mx.lines)
-    *home.o(.bss.mx.lines)
     . = ALIGN(64);
     *libmxkern.a:vm.c.o(.bss .bss.* COMMON)
     *libmxkern.a:image.c.o(.bss .bss.* COMMON)
+    . = ALIGN(64);
+    __vm_bss_end = .;
+    *home.o(.bss.mx.lines)
+    . = ALIGN(64);
     *home.o(.bss .bss.* COMMON)
     . = ALIGN(64);
     __prog_bss_end = .;

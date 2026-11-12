@@ -113,7 +113,21 @@ void end_state_load(const void *from);
 void end_state_swap(void *copy);
 void end_unpark_beside(void);
 /* kproc.c: a process beside the one in front (step 2e-2) */
-void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end);
+struct vm_space;
+void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struct vm_space *space);
+/* vm.c's address spaces (mx OS plan, phase 3a) */
+struct vm_space *mx__vm_space_new(void);
+void mx__vm_space_switch(struct vm_space *s);
+struct vm_space *mx__vm_space_now(void);
+void mx__vm_space_free(struct vm_space *s);
+void mx__vm_shutdown(void);
+void mx__vm_swap_close(void);
+void mx__vm_tlb_again(void);
+void mx__vm_tlb_fix(void);
+void *mx__vm_frames_take_aligned(u32 bytes, u32 align);
+void mx__vm_frames_give(void *p, u32 bytes);
+int exec_vm_kept(void);
+struct vm_space *exec_front_space(void);
 void kproc_side_end(void);
 int kproc_side(void);
 u32 kproc_switches(void);

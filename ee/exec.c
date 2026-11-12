@@ -163,18 +163,41 @@ static u32 *mxk_note(int fd, const struct phdr *ph, u32 n, u32 *heap, u32 *versi
 static u32 core_phys; /* where its run is */
 static int core_vm;    /* the program has VM segments */
 static u32 mem_top(void);
+/* phase 3a (below, exec_park): parked programs with VM, and the core of
+   the one in front when it is frames of the VM's pool */
+static int vm_kept;
+static void *core_pin;
+static u32 core_pin_bytes;
+
 static int core_place(u32 end, u32 heap) {
   u32 va_end = (end + heap + MIB - 1) & ~(MIB - 1), run = va_end - LOW;
-  u32 top = mem_top();
-  if (va_end > TOP || top < LOW + MIN_FRAMES + run)
+  if (va_end > TOP)
     return -1;
-  u32 phys = top - run;
+  u32 phys;
+  if (vm_kept) {
+    /* a program beside has VM: the core is frames of its pool (phase 3a) */
+    void *p = mx__vm_frames_take_aligned(run, MIB);
+    if (!p)
+      return -1;
+    phys = (u32)(uintptr_t)p - MX_PHYS_WIN;
+    core_pin = p, core_pin_bytes = run;
+  } else {
+    u32 top = mem_top();
+    if (top < LOW + MIN_FRAMES + run)
+      return -1;
+    phys = top - run;
+  }
   last_asid = last_asid % 255 + 1;
   mx__asid_set(last_asid);
   mx__core_off = phys - LOW;
   int n = tlb_core_map(va_end, mx__core_off);
+  if (n >= 0)
+    mx__vm_tlb_fix(); /* the VM on (another's): not its ring's any more */
   if (n < 0) {
     tlb_restore();
+    if (core_pin)
+      mx__vm_frames_give(core_pin, core_pin_bytes);
+    core_pin = 0, core_pin_bytes = 0;
     return -1;
   }
   core_slots = (u32)n;
@@ -205,6 +228,9 @@ struct park_slot {
   u32 asid, core_off, core_end, core_phys, frames_hi, core_slots;
   struct mx_loader_args largs;
   u8 *state; /* the kernel's state of it, in its core heap */
+  struct vm_space *space; /* its VM's address space (vm.c), 0: none */
+  void *core_pin;         /* its core, when frames of the VM's pool */
+  u32 core_pin_bytes;
 };
 static struct park_slot parks[MAX_PARK];
 static int npark;
@@ -212,6 +238,54 @@ static int npark;
 #define park parks[npark ? npark - 1 : 0]
 /* the last one back in front (exec_unpark), for its waiting thread */
 static int park_done, park_status;
+
+/* ---- VM programs side by side (mx OS plan, phase 3a step 3) ----------------------
+
+   A program with VM may wait for or run beside another: its address space
+   (vm.c) stays, the VM's state is not set back (end.c, exec_vm_kept), and
+   the next program's mx_vm_init makes it a space of its own on the same
+   frames and swap file (kvm_init); its core is a run of those frames,
+   pinned (core_place). Its end gives both back (kvm_front_gone). */
+static struct vm_space *front_space; /* the program in front's, while vm_kept */
+int exec_vm_kept(void) { return vm_kept; }
+struct vm_space *exec_front_space(void) { return front_space; }
+static struct vm_space *parked_space(void) {
+  for (int i = npark - 1; i >= 0; i--)
+    if (parks[i].space)
+      return parks[i].space;
+  return 0;
+}
+/* the program in front is gone (its mx_exit, a crash, a kill): its space and
+   core back to the VM, the one below current */
+static void kvm_front_gone(void) {
+  struct vm_space *s = parked_space();
+  if (front_space && s) {
+    mx__vm_space_switch(s);
+    mx__vm_space_free(front_space);
+  }
+  front_space = 0;
+  if (core_pin)
+    mx__vm_frames_give(core_pin, core_pin_bytes);
+  core_pin = 0, core_pin_bytes = 0;
+}
+static int kvm_init(const struct mx_vm_config *c) {
+  if (!vm_kept)
+    return mx_vm_init(c);
+  if (front_space)
+    return -1; /* on already */
+  struct vm_space *s = mx__vm_space_new();
+  if (!s)
+    return -1;
+  mx__vm_space_switch(s);
+  front_space = s;
+  return 0;
+}
+static void kvm_shutdown(void) {
+  if (vm_kept)
+    kvm_front_gone(); /* the VM goes on, the others' */
+  else
+    mx__vm_shutdown();
+}
 
 /* the program's core heap (maxsdk's src/vm/heap.c, the kernel's copy) */
 void *mx__phys_alloc(u32 bytes, u32 align);
@@ -362,7 +436,7 @@ int exec_park_status(void) { return park_status; }
 int exec_park(int beside) {
   /* above another only beside: one that waits above a service crashed at
      once (its stack in the next one's core); it takes the restart's way */
-  if (npark == MAX_PARK || (npark && !beside) || !core_moved || core_vm || !on_libmxk ||
+  if (npark == MAX_PARK || (npark && !beside) || !core_moved || !on_libmxk ||
       !end_tables_known())
     return -1;
   struct park_slot *q = &parks[npark];
@@ -371,6 +445,12 @@ int exec_park(int beside) {
   if (!q->state || end_park(mx_bios_get_thread_id(), beside) < 0)
     return -1;
   q->tid = user_tid, q->shell = shell, q->beside = beside;
+  /* its VM stays: not saved or set back with the rest (end.c) */
+  q->space = core_vm && mx_vm_active() ? mx__vm_space_now() : 0;
+  vm_kept += q->space != 0;
+  front_space = 0;
+  q->core_pin = core_pin, q->core_pin_bytes = core_pin_bytes;
+  core_pin = 0, core_pin_bytes = 0;
   q->proc = end_proc_front();
   q->asid = mx__asid, q->core_off = mx__core_off, q->core_end = core_end;
   q->core_phys = core_phys, q->frames_hi = frames_hi, q->core_slots = core_slots;
@@ -382,7 +462,8 @@ int exec_park(int beside) {
   /* the next program starts with the kernel's state as linked; beside, it
      goes on with its own part of it (kproc_side_begin) */
   if (beside) {
-    kproc_side_begin(ksched_thread_proc(mx_bios_get_thread_id()), q->state, core_slots, core_end);
+    kproc_side_begin(ksched_thread_proc(mx_bios_get_thread_id()), q->state, core_slots, core_end,
+                     q->space);
   } else
     end_reset_state();
   user_tid = 0, shell = 0, on_libmxk = 0, core_moved = 0;
@@ -392,6 +473,7 @@ int exec_park(int beside) {
 /* in the command thread, the other ended (or did not start: status -1): the
    one it was started by is in front again */
 void exec_unpark(int status) {
+  kvm_front_gone();
   int side = 0;
   if (park.beside) {
     side = kproc_side();
@@ -400,6 +482,8 @@ void exec_unpark(int status) {
   mx__asid_set(park.asid);
   mx__core_off = park.core_off;
   int n = tlb_core_map(park.core_end, park.core_off);
+  if (n >= 0)
+    mx__vm_tlb_fix();
   core_slots = n < 0 ? 0 : (u32)n;
   if (n < 0) {
     /* cannot be: it was mapped so before */
@@ -409,9 +493,18 @@ void exec_unpark(int status) {
   end_state_load(park.state);
   mx__pad_forget(); /* its ports were closed: its next mx_pad_init opens them */
   user_tid = park.tid, shell = park.shell, on_libmxk = 1, core_moved = 1;
-  core_vm = 0; /* it has none (exec_park): the other's may have had */
+  core_vm = park.space != 0;
   core_end = park.core_end, core_phys = park.core_phys, frames_hi = park.frames_hi;
   largs = park.largs;
+  /* its address space in front again */
+  if (park.space) {
+    mx__vm_space_switch(park.space);
+    front_space = park.space;
+    vm_kept--;
+    if (!vm_kept)
+      front_space = 0; /* the VM is its alone again */
+  }
+  core_pin = park.core_pin, core_pin_bytes = park.core_pin_bytes;
   if (!park.beside)
     end_unpark();
   else
@@ -443,7 +536,7 @@ void exec_park_forget(void) {
 /* the other takes all memory: the waiting one ends with it. Only one that
    waits alone: one above a service cannot give the service's memory */
 int exec_park_drop(void) {
-  if (npark != 1)
+  if (npark != 1 || vm_kept)
     return -1;
   if (park.beside)
     kproc_side_end(); /* held: its threads end with the other's */
@@ -498,9 +591,13 @@ const char *const *exec_note(void) { return program_note; }
 /* Called by every libmxk program: its SIF is the kernel's, so the kernel's
    reports may go to the tty too. note: 0, the VM being the kernel's (a
    program of version 3 has its own). */
+void mx__vm_handlers_again(void);
 static void exception_setup(const char **note) {
   program_note = note;
   mx_exception_init();
+  /* a program beside has VM (phase 3a): its handlers in front again */
+  if (vm_kept)
+    mx__vm_handlers_again();
   mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
 }
 
@@ -510,7 +607,8 @@ static void kernel_program(void *heap_lo, void *heap_hi, void *vm_lo, void *vm_h
     /* its ASID and core run since the load: the core heap ends with the
        run, the frames are below it */
     mx__heap_range(heap_lo, (void *)(uintptr_t)core_end);
-    mx__vm_frames(LOW, frames_hi);
+    if (!vm_kept) /* else the frames are the VM's already, its core among them */
+      mx__vm_frames(LOW, frames_hi);
   } else {
     last_asid = last_asid % 255 + 1;
     mx__asid_set(last_asid);
@@ -557,6 +655,12 @@ static const struct mxk_services kernel = {
     .mx_tty_write = klog_tty_write,
 #define MXK_ENTRY(ret, name, params, args) .name = name,
     MXK_CALLS(MXK_ENTRY)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winitializer-overrides"
+    /* VM programs side by side (phase 3a): through the kernel's own */
+    .mx_vm_init = kvm_init,
+    .mx__vm_shutdown = kvm_shutdown,
+#pragma clang diagnostic pop
     .fio_ending = mx__fio_ending,
     .pad_init = pad_init,
     .pad_read = pad_read,

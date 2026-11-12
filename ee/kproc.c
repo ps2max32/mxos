@@ -51,6 +51,7 @@ static struct side {
                 space is live, the front's while its own is */
   u32 keep_n, keep_end; /* tlb_core_keep with it (all below it and its own) */
   struct kvu0 vu;
+  struct vm_space *space; /* its VM's address space (phase 3a), 0: none */
 } sides[MAX_SIDES];
 static int nsides;
 static int loaded = -1; /* the side whose space, state and VU0 are live; -1 the front's */
@@ -91,6 +92,11 @@ static void switch_to(int to, int vu) {
     end_state_swap(d->state);
   }
   loaded = to;
+  /* the VM's address space with it (vm.c: its TLB entries out, its fast
+     refill on the new one); a process without VM leaves the VM as it is */
+  struct vm_space *vsp = to >= 0 ? sides[to].space : exec_front_space();
+  if (vsp)
+    mx__vm_space_switch(vsp);
   switches++;
 }
 
@@ -133,13 +139,14 @@ void kproc_handler_leave(void) { switch_to(handler_prev, 0); }
    front's new one, as linked, and the side's part of it its own again at
    once, the thread going on. Its core's TLB entries (core_slots, after
    those of the sides below it) kept. */
-void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end) {
+void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struct vm_space *space) {
   int was = mx_di();
   switch_to(-1, 1); /* its thread is the front's: so it is already */
   struct side *d = &sides[nsides];
   u32 below_n = nsides ? sides[nsides - 1].keep_n : 0;
   u32 below_end = nsides ? sides[nsides - 1].keep_end : 0;
   d->proc = proc;
+  d->space = space;
   d->asid = mx__asid, d->core_off = mx__core_off;
   d->state = state;
   d->keep_n = below_n + core_slots;
