@@ -36,14 +36,15 @@ void mx__exception_vector(void);
 /* kvec.S's vectors and the tables they jump through (through kseg0; by
    ExcCode, by interrupt line), and where t9 waits meanwhile */
 extern const u32 kvec_exc[], kvec_exc_end[], kvec_irq[], kvec_irq_end[];
-u32 kvec_exc_table[16] __attribute__((aligned(64)));
-u32 kvec_irq_table[8] __attribute__((aligned(64)));
+/* kept over the kernel's own restart (2h-4e-1): the vectors stay then */
+u32 kvec_exc_table[16] __attribute__((section(".kept"), aligned(64)));
+u32 kvec_irq_table[8] __attribute__((section(".kept"), aligned(64)));
 u64 kvec_t9 __attribute__((aligned(64)));
 /* the interrupted (or calling) thread's sp, ra and at, as the BIOS's save
    area at 0x8000_10C0 has them, and kvec_irq_bios's word (2h-4d-2); the
    BIOS's handlers of the lines that are not the kernel's */
 u32 kvec_save[16] __attribute__((aligned(64)));
-u32 kvec_irq_orig[8] __attribute__((aligned(64)));
+u32 kvec_irq_orig[8] __attribute__((section(".kept"), aligned(64)));
 /* ksys.S's stack for the kernel's own syscalls (the BIOS's at 0x8001_8E70) */
 u8 ksys_stack[KSYS_STACK] __attribute__((aligned(16)));
 /* the vectors: TLB refill, common, interrupt; the BIOS's code there (kept
@@ -51,7 +52,7 @@ u8 ksys_stack[KSYS_STACK] __attribute__((aligned(16)));
 #define VEC_BYTES 0x80u
 static const u32 vec_at[3] = {0x000u, 0x180u, 0x200u};
 static u32 kvec_bios[3][VEC_BYTES / 4] __attribute__((section(".kept"), aligned(64)));
-static int kvec_on;
+static int kvec_on __attribute__((section(".kept")));
 
 /* ksys.S's: the BIOS syscalls of the program watched (mx OS plan step
    2h-3), by v1 & 0xFF; the ASID watched (none: above 0xFF); the BIOS's
@@ -62,9 +63,10 @@ u32 ksys_watch __attribute__((section(".kept"))) = 0x100;
 u32 ksys_orig __attribute__((section(".kept"))) = 0;
 /* the kernel's own, since its boot */
 u32 ksys_kcounts[256] __attribute__((section(".kept"))) = {0};
-/* the kernel's own syscall handlers, by |number| (2h-4a); 0: the BIOS's */
-u32 ksys_handlers[128];
-static int ksys_on; /* entry 8 is ksys.S */
+/* the kernel's own syscall handlers, by |number| (2h-4a); 0: the BIOS's.
+   Kept over the kernel's own restart, with the vectors (2h-4e-1) */
+u32 ksys_handlers[128] __attribute__((section(".kept")));
+static int ksys_on __attribute__((section(".kept"))); /* entry 8 is ksys.S */
 
 /* kirq.S's: the registers it keeps, its stack, the BIOS's handlers (kept
    over the restart: the table may still point here then) */
@@ -201,6 +203,35 @@ static const u32 *kvec_code(int i, u32 *bytes) {
   return s;
 }
 
+/* SIF0's interrupt off (D_STAT's mask bit, a 1 written turns it over), as
+   the BIOS's DisableDmac, without the BIOS */
+void kirq_sif0_off(void) {
+  volatile u32 *d_stat = (volatile u32 *)0x1000E010u;
+  u32 bit = 1u << (16 + MX_DMAC_SIF0);
+  if (*d_stat & bit)
+    *d_stat = bit;
+}
+
+/* The kernel's vectors are still in after its own restart (2h-4e-1:
+   kirq_keep, not kirq_off): its start-up sets its handlers in its tables,
+   without the BIOS's thread and handler calls (start.c's mx__kernel_kept) */
+int kirq_kept(void) { return kvec_on && ksys_on; }
+
+/* Before the kernel's own restart (restart() after its first): the vectors
+   and tables stay, so its start-up calls no BIOS; interrupts off until it
+   is back, and they go on to the BIOS's handlers (kirq) until ksched_init */
+void kirq_keep(void) {
+  mx_di();
+  /* every INTC cause and DMAC channel off (a 1 written turns a mask bit
+     over): the BIOS has no handler of the kernel's (the vblank's, after
+     its start-up's EI: "INTC(2) Handler does not exist" and a break); the
+     kernel's handlers turn theirs on again, and what is pending stays */
+  volatile u32 *i_mask = (volatile u32 *)0x1000F010u, *d_stat = (volatile u32 *)0x1000E010u;
+  *i_mask = *i_mask;
+  *d_stat = *d_stat & 0x03FF0000u;
+  on = 0;
+}
+
 void kirq_on(void) {
   if (on)
     return;
@@ -209,11 +240,16 @@ void kirq_on(void) {
      no handler of the channel but leaves it on, and a transfer of the IOP's
      before the kernel's threads ends in the BIOS's "DMAC(5) Handler does
      not exist" and its break (restart does the same before kirq_off) */
-  mx_bios_disable_dmac(MX_DMAC_SIF0);
-  /* the poke's bootstrap; it stays the BIOS's syscall after kirq_off */
-  mx_bios_set_syscall(POKE_SYSCALL, (void *)k_poke);
+  kirq_sif0_off();
   mx__kpoke32 = sif_poke;
   mx__kpeek32 = sif_peek;
+  if (kirq_kept()) {
+    /* after the kernel's own restart: all as it was (2h-4e-1) */
+    on = 1;
+    return;
+  }
+  /* the poke's bootstrap; it stays the BIOS's syscall after kirq_off */
+  mx_bios_set_syscall(POKE_SYSCALL, (void *)k_poke);
   u32 my_intc = kseg0(kirq_intc), my_dmac = kseg0(kirq_dmac), my_sys = kseg0(ksys_entry);
   /* the BIOS's tables, the kernel's from them; its handlers of the kernel's
      entries, where they go on to (not the kernel's: an older kernel's

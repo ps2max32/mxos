@@ -281,11 +281,18 @@ static void restart(void) {
   /* ExecPS2 drops the handlers but leaves the channel on: a command from the
      host now would end in the kernel's "DMAC(5) Handler does not exist" and
      its break. cmd_init turns it on again. */
-  mx_bios_disable_dmac(MX_DMAC_SIF0);
-  /* the BIOS's interrupt table: until main turns the kernel's on again, an
-     interrupt must not find the kernel's entry with its state half reset */
+  kirq_sif0_off();
+  /* the first start's ExecPS2: the BIOS's vectors again (until main turns
+     the kernel's on again, an interrupt must not find the kernel's entry
+     with its state half reset); the kernel's own restart keeps its vectors
+     and tables (2h-4e-1), interrupts off until its start-up turns them on,
+     and its interrupt entry sends them to the BIOS's handlers until
+     ksched_init */
   mx_di();
-  kirq_off();
+  if (restarts > 1)
+    kirq_keep();
+  else
+    kirq_off();
   mx__sif_dma_give(); /* the BIOS's SIF1 ring again, for whoever runs next */
   if (restarts > 1) {
     /* mx OS plan 2h-4c: after the first start (which sheds the loader's
@@ -356,6 +363,10 @@ void mxlink_return(int status) {
 }
 
 int end_pending(void) { return ending; }
+
+/* start.c: no BIOS thread or heap set-up after the kernel's own restart
+   (2h-4e-1) */
+int mx__kernel_kept(void) { return kirq_kept(); }
 
 /* exception.c, after the report of a crash: one of a program the kernel
    started ends that program as its own mx_exit(255) would (the kernel's
