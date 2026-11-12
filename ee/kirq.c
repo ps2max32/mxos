@@ -1,8 +1,12 @@
 /* The kernel first at every INTC and DMAC interrupt (mx OS plan, step 2d-1;
-   docs/bios.md, probe/p37_irqhook.c): the BIOS's interrupt table
-   (0x8001_5380) points its INTC and DMAC entries at kirq.S, which runs
-   kirq(): with the kernel's threads on (2d-2) the kernel's dispatch handles
-   the lines whole (ksched.c), else it goes on into the BIOS's handlers.
+   docs/bios.md, probe/p37_irqhook.c): the INTC and DMAC entries of the
+   interrupt table point at kirq.S, which runs kirq(): with the kernel's
+   threads on (2d-2) the kernel's dispatch handles the lines whole
+   (ksched.c), else it goes on into the BIOS's handlers.
+
+   Since step 2h-4d-1 the level 1 vectors are the kernel's (kvec.S) and so
+   are the tables they jump through (kvec_exc_table, kvec_irq_table, filled
+   from the BIOS's at kirq_on): the BIOS's tables are not written.
 
    Only while the kernel or a program built for it runs: before a program
    without the kernel's note (ps2sdk's, libmx, older builds), which may load
@@ -19,15 +23,26 @@
 #include "mxlink.h"
 
 #define TABLE 0x80015380u
-#define ENTRY_INTC (TABLE + 4 * 2)
-#define ENTRY_DMAC (TABLE + 4 * 3)
 #define POKE_SYSCALL 0x69 /* RFU105: unused by the BIOS (0x5C is EnableIntcHandler) */
-/* the BIOS's exception table, entry 8: the syscall dispatcher (ksys.S) */
-#define ENTRY_SYSCALL (0x80015340u + 4 * 8)
+/* the BIOS's exception table (entry 8: the syscall dispatcher) */
+#define EXC_TABLE 0x80015340u
 
 void kirq_intc(void);
 void kirq_dmac(void);
 void ksys_entry(void);
+
+/* kvec.S's vectors and the tables they jump through (through kseg0; by
+   ExcCode, by interrupt line), and where t9 waits meanwhile */
+extern const u32 kvec_exc[], kvec_exc_end[], kvec_irq[], kvec_irq_end[];
+u32 kvec_exc_table[16] __attribute__((aligned(64)));
+u32 kvec_irq_table[8] __attribute__((aligned(64)));
+u64 kvec_t9 __attribute__((aligned(64)));
+/* the vectors: TLB refill, common, interrupt; the BIOS's code there (kept
+   over the restart, which puts it back first) */
+#define VEC_BYTES 0x80u
+static const u32 vec_at[3] = {0x000u, 0x180u, 0x200u};
+static u32 kvec_bios[3][VEC_BYTES / 4] __attribute__((section(".kept"), aligned(64)));
+static int kvec_on;
 
 /* ksys.S's: the BIOS syscalls of the program watched (mx OS plan step
    2h-3), by v1 & 0xFF; the ASID watched (none: above 0xFF); the BIOS's
@@ -67,8 +82,26 @@ void kirq_counts(u32 *intc, u32 *dmac) {
    reads the word at a, 1 writes v there; 2 copies n bytes from physical v
    (through kseg0) to a, 3 from a to physical v (a: the caller's memory,
    mapped under its ASID in kernel mode too); 4 reads the halfword at a, 5
-   writes v there (registers in kseg1, kvideo.c) */
+   writes v there (registers in kseg1, kvideo.c); 6 writes code at
+   physical v (kvec_write) */
 static u32 k_poke(u32 a, u32 v, u32 op, u32 n) {
+  if (op == 6) {
+    /* code: n bytes (whole lines) from a to physical v, then out of the
+       data cache there (a vector, 2h-4d-1), and the whole instruction
+       cache and BTAC invalidated by index: their CACHE operations take no
+       address with bit 31 set (the hardware restrictions, (13)), so not the
+       vector's kseg0 address */
+    volatile u32 *m = (volatile u32 *)(uintptr_t)(0x80000000u | v);
+    const u32 *u = (const u32 *)(uintptr_t)a;
+    for (u32 i = 0; i < n / 4; i++)
+      m[i] = u[i];
+    for (u32 o = 0; o < n; o += 64) {
+      uintptr_t l = (uintptr_t)m + o;
+      __asm__ volatile("sync.l\n\tcache 0x18, 0(%0)\n\tsync.l" : : "r"(l) : "memory");
+    }
+    mx_icache_invalidate_all();
+    return n;
+  }
   if (op >= 4) {
     if (op == 5)
       *(volatile u16 *)a = (u16)v;
@@ -97,10 +130,13 @@ static u32 kcall4(u32 a, u32 v, u32 op, u32 n) {
   register u32 a3 __asm__("$7") = n;
   register u32 v1 __asm__("$3") = POKE_SYSCALL;
   register u32 v0 __asm__("$2");
+  /* a function call to the handler: what a C function may change, it may
+     (a0-a3 too: k_poke's loop changed a0 under a caller that kept it, 2h-4d) */
   __asm__ volatile("syscall"
-                   : "=r"(v0), "+r"(v1)
-                   : "r"(a0), "r"(a1), "r"(a2), "r"(a3)
-                   : "memory");
+                   : "=r"(v0), "+r"(v1), "+r"(a0), "+r"(a1), "+r"(a2), "+r"(a3)
+                   :
+                   : "memory", "$1", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24",
+                     "$25", "hi", "lo");
   return v0;
 }
 static u32 kcall(u32 a, u32 v, u32 write) { return kcall4(a, v, write, 0); }
@@ -138,37 +174,84 @@ static void sif_poke(u32 a, u32 v) { kcall(a, v, 1); }
 /* and its reads of the BIOS's software registers (2h-4b) */
 static u32 sif_peek(u32 a) { return kcall(a, 0, 0); }
 
+/* a vector's code, in one syscall (the common vector itself takes it) */
+static void kvec_write(u32 at, const u32 *code, u32 bytes) {
+  kcall4((u32)(uintptr_t)code, at, 6, bytes);
+}
+
+/* the vector's code and its size */
+static const u32 *kvec_code(int i, u32 *bytes) {
+  const u32 *s = i == 2 ? kvec_irq : kvec_exc, *e = i == 2 ? kvec_irq_end : kvec_exc_end;
+  *bytes = (u32)((const u8 *)e - (const u8 *)s);
+  return s;
+}
+
 void kirq_on(void) {
   if (on)
     return;
+  /* SIF0's interrupt off until the kernel's handler is there (cmd_init):
+     after an ExecPS2 (the first start, by mxboot or a loader) the BIOS has
+     no handler of the channel but leaves it on, and a transfer of the IOP's
+     before the kernel's threads ends in the BIOS's "DMAC(5) Handler does
+     not exist" and its break (restart does the same before kirq_off) */
+  mx_bios_disable_dmac(MX_DMAC_SIF0);
+  /* the poke's bootstrap; it stays the BIOS's syscall after kirq_off */
   mx_bios_set_syscall(POKE_SYSCALL, (void *)k_poke);
   mx__kpoke32 = sif_poke;
   mx__kpeek32 = sif_peek;
-  u32 intc = kcall(ENTRY_INTC, 0, 0), dmac = kcall(ENTRY_DMAC, 0, 0);
-  u32 my_intc = kseg0(kirq_intc), my_dmac = kseg0(kirq_dmac);
-  /* not ours already (a restart left them): the BIOS's */
-  if (intc != my_intc)
-    kirq_orig[0] = intc;
-  if (dmac != my_dmac)
-    kirq_orig[1] = dmac;
-  if ((kirq_orig[0] >> 28) != 8 || (kirq_orig[1] >> 28) != 8)
-    return; /* not the table expected: the BIOS's stays */
-  u32 sys = kcall(ENTRY_SYSCALL, 0, 0), my_sys = kseg0(ksys_entry);
-  if (sys != my_sys)
-    ksys_orig = sys;
+  u32 my_intc = kseg0(kirq_intc), my_dmac = kseg0(kirq_dmac), my_sys = kseg0(ksys_entry);
+  /* the BIOS's tables, the kernel's from them; its handlers of the kernel's
+     entries, where they go on to (not the kernel's: an older kernel's
+     kirq_off put them back) */
+  for (u32 i = 0; i < 16; i++)
+    kvec_exc_table[i] = kcall(EXC_TABLE + 4 * i, 0, 0);
+  for (u32 i = 0; i < 8; i++)
+    kvec_irq_table[i] = kcall(TABLE + 4 * i, 0, 0);
+  if (kvec_irq_table[2] != my_intc)
+    kirq_orig[0] = kvec_irq_table[2];
+  if (kvec_irq_table[3] != my_dmac)
+    kirq_orig[1] = kvec_irq_table[3];
+  if (kvec_exc_table[8] != my_sys)
+    ksys_orig = kvec_exc_table[8];
+  if ((kirq_orig[0] >> 28) != 8 || (kirq_orig[1] >> 28) != 8 || (ksys_orig >> 28) != 8) {
+    con_log(CON_RED, "irq: the BIOS's tables not as expected: no kernel interrupts");
+    return;
+  }
+  kvec_irq_table[2] = my_intc;
+  kvec_irq_table[3] = my_dmac;
+  kvec_exc_table[8] = my_sys;
+  /* the BIOS's vectors kept (unless they are the kernel's: left by a crash
+     before kirq_off, the copy is the one before) */
+  for (int i = 0; i < 3; i++) {
+    u32 bytes, now[VEC_BYTES / 4];
+    const u32 *code = kvec_code(i, &bytes);
+    kcall4((u32)(uintptr_t)now, vec_at[i], 2, VEC_BYTES);
+    int ours = 1; /* the whole stub: the interrupt vector's first word is the BIOS's too */
+    for (u32 k = 0; k < bytes / 4; k++)
+      ours &= now[k] == code[k];
+    if (!ours) {
+      for (u32 k = 0; k < VEC_BYTES / 4; k++)
+        kvec_bios[i][k] = now[k];
+    } else if (!kvec_bios[i][0]) {
+      con_log(CON_RED, "irq: the vectors are not the BIOS's: no kernel interrupts");
+      return;
+    }
+  }
+  /* the poke the kernel's own before the vectors are: the later writes go
+     through its syscall entry already */
+  ksys_handlers[POKE_SYSCALL] = (u32)(uintptr_t)k_poke;
   mx_dcache_flush_all();
   mx_icache_invalidate_all();
   int was = mx_di();
-  kcall(ENTRY_INTC, my_intc, 1);
-  kcall(ENTRY_DMAC, my_dmac, 1);
-  if ((ksys_orig >> 28) == 8) {
-    kcall(ENTRY_SYSCALL, my_sys, 1);
-    ksys_on = 1;
+  for (int i = 0; i < 3; i++) {
+    u32 bytes;
+    const u32 *code = kvec_code(i, &bytes);
+    kvec_write(vec_at[i], code, bytes);
   }
+  kvec_on = 1;
+  ksys_on = 1;
   mx_irq_restore(was);
   on = 1;
-  /* the poke the kernel's own from now on (SetSyscall was its bootstrap) */
-  ksys_set(POKE_SYSCALL, (void *)k_poke);
 }
 
 /* A syscall handler of the kernel's own (2h-4a), run by ksys.S as the BIOS's
@@ -185,22 +268,19 @@ int ksys_set(int number, void *handler) {
 /* maxsdk's src/base/excset.c: the VM's and the exception code's handlers */
 int mx__kernel_syscall_set(int number, void *handler) { return ksys_set(number, handler); }
 
-/* the BIOS's exception table (0x8001_5340, by ExcCode: 1-3 the TLB's, 4-13
-   the others; the level 1 vectors jump through it) written by the kernel,
-   as SetVTLBRefillHandler and SetVCommonHandler do (2h-4a). A handler below
+/* the kernel's exception table (by ExcCode: 1-3 the TLB's, 4-13 the
+   others; its level 1 vectors jump through it, 2h-4d-1), as the BIOS's
+   SetVTLBRefillHandler and SetVCommonHandler set the BIOS's. A handler below
    32 MiB goes in through kseg0: the vectors run at EXL = 1. */
-#define EXC_TABLE 0x80015340u
 int mx__kernel_handler_set(int code, void (*handler)(void), void **old) {
-  if (!ksys_on || code < 1 || code > 13 || code == 8)
+  if (!kvec_on || code < 1 || code > 13 || code == 8)
     return -1;
   u32 h = (u32)(uintptr_t)handler;
   if (h < 0x02000000u)
     h |= 0x80000000u;
-  u32 a = EXC_TABLE + 4 * (u32)code;
-  int was = mx_di();
-  *old = (void *)(uintptr_t)kcall(a, 0, 0);
-  kcall(a, h, 1);
-  mx_irq_restore(was);
+  *old = (void *)(uintptr_t)kvec_exc_table[code];
+  kvec_exc_table[code] = h;
+  mx_dcache_flush_all(); /* the vectors read it through kseg0 */
   return 0;
 }
 
@@ -227,20 +307,19 @@ const u32 *ksys_watch_end(void) {
   return ksys_counts;
 }
 
+/* the BIOS's vectors back (its tables were never written): the poke is the
+   BIOS's syscall again, as kirq_on's SetSyscall left it */
 void kirq_off(void) {
-  if (!on && kirq_orig[0] == 0)
+  if (!on)
     return;
-  mx_bios_set_syscall(POKE_SYSCALL, (void *)k_poke);
   int was = mx_di();
-  if ((kirq_orig[0] >> 28) == 8)
-    kcall(ENTRY_INTC, kirq_orig[0], 1);
-  if ((kirq_orig[1] >> 28) == 8)
-    kcall(ENTRY_DMAC, kirq_orig[1], 1);
-  if ((ksys_orig >> 28) == 8)
-    kcall(ENTRY_SYSCALL, ksys_orig, 1);
-  mx_irq_restore(was);
+  if (kvec_on)
+    for (int i = 0; i < 3; i++)
+      kvec_write(vec_at[i], kvec_bios[i], VEC_BYTES);
+  kvec_on = 0;
   on = 0;
   ksys_on = 0;
+  mx_irq_restore(was);
   for (int i = 0; i < 128; i++)
     ksys_handlers[i] = 0;
 }

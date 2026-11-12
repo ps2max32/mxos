@@ -1,7 +1,8 @@
 /* The kernel first at every INTC and DMAC interrupt (mx OS plan, step 2d;
-   docs/bios.md). The BIOS's interrupt vector (0x8000_0200) saved sp, ra and
-   at at 0x8000_10C0 and jumps through its table (0x8001_5380: INTC entry 2,
-   DMAC entry 3), which kirq.c points here, through kseg0.
+   docs/bios.md). The interrupt vector (0x8000_0200: the kernel's, kvec.S,
+   as the BIOS's) saved sp, ra and at at 0x8000_10C0 and jumps through the
+   kernel's table (kvec_irq_table: INTC entry 2, DMAC entry 3), which
+   kirq.c points here, through kseg0.
 
    The registers C may change are saved, and the interrupted thread's sp, ra,
    at, EPC and Status (a syscall of a handler, an i-call, overwrites the

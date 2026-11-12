@@ -1,7 +1,9 @@
-/* The kernel's syscall entry (mx OS plan steps 2h-3 and 2h-4): the BIOS's
-   level 1 vector (0x8000_0180) jumps through its exception table
-   (0x8001_5340, entry 8 the syscall dispatcher at 0x8000_0280, docs/bios.md)
-   with only k0 and k1 changed; kirq.c points entry 8 here, through kseg0.
+/* The kernel's syscall entry (mx OS plan steps 2h-3 and 2h-4): the common
+   level 1 vector (0x8000_0180: the kernel's, kvec.S, 2h-4d-1) jumps through
+   the exception table (the kernel's, kvec_exc_table; the BIOS's at
+   0x8001_5340 has its syscall dispatcher at 0x8000_0280 in entry 8,
+   docs/bios.md) with only k0 and k1 changed; kirq.c points entry 8 here,
+   through kseg0.
 
    First the count (2h-3): a syscall of the watched program (EntryHi's ASID
    that of the program the kernel started last, ksys_watch) from its own code
