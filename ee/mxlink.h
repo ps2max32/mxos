@@ -113,7 +113,7 @@ void end_state_load(const void *from);
 void end_state_swap(void *copy);
 void end_unpark_beside(void);
 /* kproc.c: a process beside the one in front (step 2e-2) */
-void kproc_side_begin(int proc, void *state);
+void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end);
 void kproc_side_end(void);
 int kproc_side(void);
 u32 kproc_switches(void);
@@ -214,7 +214,7 @@ int exec_park(int beside);
 int exec_park_done(void);
 int exec_park_status(void);
 void exec_unpark(int status);
-void exec_park_drop(void);
+int exec_park_drop(void);
 void exec_park_forget(void);
 /* the pad's ports closed (main.c) */
 void pads_close(void);
@@ -234,7 +234,7 @@ struct mx_proc_info;
 struct mx_msg;
 int end_proc_front(void);
 int end_proc_parked(void);
-const char *parked_program(void);
+const char *parked_program(int level);
 int kproc_list(struct mx_proc_info *p, int max);
 int kproc_self(void);
 void exec_end_range(u32 *lo, u32 *hi);

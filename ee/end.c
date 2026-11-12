@@ -65,29 +65,37 @@ static int sema_mine(int id) {
   return !(semas_before[id / 32] >> (id % 32) & 1) && sema_there(id);
 }
 
-/* step 2c: what a program that waits for another (exec_park) had here */
-static struct {
+/* step 2c: what a program that waits for another (exec_park) had here; a
+   stack, as exec.c's (a service and one above it) */
+struct parked {
   u32 threads_before[NIDS / 32], semas_before[NIDS / 32];
   struct mxk_irq_tables tables;
   u32 intc_mask, dmac_mask; /* its slots that had a BIOS handler */
   u8 threads[64];           /* its threads suspended */
   u32 nthreads;
   int proc, dropped;        /* proc_now and proc_dropped */
-  int drop; /* given up: the next snapshot is its, so its end takes it too */
-} parked;
+};
+static struct parked parked_at[2];
+static int nparked;
+/* given up (end_drop): the next snapshot is its, so its end takes it too */
+static struct parked dropped_one;
+static int drop;
+#define parked parked_at[nparked ? nparked - 1 : 0]
 
-/* the process of the program in front, and of one that waits (0: none) */
+/* the process of the program in front, and of the last one that waits (0:
+   none) */
 int end_proc_front(void) { return proc_now; }
-int end_proc_parked(void) { return parked.proc; }
+int end_proc_parked(void) { return nparked ? parked.proc : 0; }
 
 void end_snapshot(int proc) {
   tables_known = 0;
   proc_now = proc, proc_dropped = 0;
-  if (parked.drop) {
-    parked.drop = 0;
-    proc_dropped = parked.proc;
+  if (drop) {
+    drop = 0;
+    proc_dropped = dropped_one.proc;
     for (int i = 0; i < NIDS / 32; i++)
-      threads_before[i] = parked.threads_before[i], semas_before[i] = parked.semas_before[i];
+      threads_before[i] = dropped_one.threads_before[i],
+      semas_before[i] = dropped_one.semas_before[i];
     return;
   }
   if (proc > 0)
@@ -280,15 +288,16 @@ static void slot_set(const void *base, u32 i, int id) {
    as they are (the kernel switches to its address space for them, kproc.c). */
 int end_park(int self, int beside) {
   if (!tables_known || !tables.intc_entry || !tables.dmac_entry ||
-      !program_range(tables.intc_entry, 4) || !program_range(tables.dmac_entry, 4))
+      !program_range(tables.intc_entry, 4) || !program_range(tables.dmac_entry, 4) ||
+      nparked == 2)
     return -1;
+  nparked++;
   for (int i = 0; i < NIDS / 32; i++)
     parked.threads_before[i] = threads_before[i], parked.semas_before[i] = semas_before[i];
   parked.tables = tables;
   parked.proc = proc_now, parked.dropped = proc_dropped;
   parked.intc_mask = parked.dmac_mask = 0;
   parked.nthreads = 0;
-  parked.drop = 0;
   if (beside)
     return 0;
   for (u32 i = 0; i < tables.nintc; i++) {
@@ -319,15 +328,19 @@ int end_park(int self, int beside) {
    channels on, its threads resumed. */
 /* beside (end_park): what the kernel knows of it back, its handlers and
    threads as they are */
-void end_unpark_beside(void) {
+static void unpark_state(void) {
   for (int i = 0; i < NIDS / 32; i++)
     threads_before[i] = parked.threads_before[i], semas_before[i] = parked.semas_before[i];
   tables = parked.tables;
   tables_known = 1;
   proc_now = parked.proc, proc_dropped = parked.dropped;
 }
+void end_unpark_beside(void) {
+  unpark_state();
+  nparked--;
+}
 void end_unpark(void) {
-  end_unpark_beside();
+  unpark_state();
   for (u32 i = 0; i < tables.nintc; i++)
     if (parked.intc_mask >> i & 1) {
       slot_set(tables.intc, i, mx_bios_add_intc_handler((int)i, (int (*)(int, void *, void *))(uintptr_t)tables.intc_entry, 0, 0));
@@ -340,11 +353,18 @@ void end_unpark(void) {
     }
   for (u32 i = 0; i < parked.nthreads; i++)
     mx_bios_resume_thread(parked.threads[i]);
+  nparked--;
 }
 
 /* Given up (the other could not have a run of its own and takes all
    memory): its threads and semaphores go with the other's end. */
-void end_drop(void) { parked.drop = 1; }
+void end_drop(void) {
+  if (!nparked)
+    return;
+  dropped_one = parked;
+  drop = 1;
+  nparked--;
+}
 
 /* The kernel's state of a program (resident.ld): its size, kept and put back */
 u32 end_state_size(void) {

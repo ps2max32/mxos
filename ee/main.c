@@ -419,10 +419,12 @@ int mxlink_crash(struct mx_crash *c) {
   return 1;
 }
 
-/* the path of a program that waits for one it started (step 2c) */
-static char parked_path[sizeof last_path];
-/* its path (kproc_list) */
-const char *parked_program(void) { return parked_path; }
+/* the paths of the programs that wait for one they started (step 2c) or
+   run beside it, by their level (exec_parked() - 1 the last) */
+static char parked_path[2][sizeof last_path];
+/* one's path (kproc_list) */
+const char *parked_program(int level) { return parked_path[level & 1]; }
+static char *parked_top(void) { return parked_path[(exec_parked() - 1) & 1]; }
 
 /* in a service's thread: the program in launch_args started in front by the
    command thread, waited for: its process, -1 if it did not start */
@@ -461,7 +463,7 @@ static int launch(int argc, const char *args, u32 args_len, const char *swap, in
   /* a program with its core at a run of its own and without VM waits for
      the other, in its own thread (not the command thread's takeover) */
   if (mx_bios_get_thread_id() != cmd_thread_id() && exec_park(beside != 0) == 0) {
-    memcpy(parked_path, last_path, sizeof parked_path);
+    memcpy(parked_top(), last_path, sizeof last_path);
     pads_close();
     exec_swap(launch_swap[0] ? launch_swap : 0);
     exec_park_wait_set();
@@ -508,7 +510,7 @@ int kproc_service(void) {
     return -1;
   exec_park_service_set();
   service_try = 0;
-  memcpy(parked_path, last_path, sizeof parked_path);
+  memcpy(parked_top(), last_path, sizeof last_path);
   pads_close();
   int argc = 0;
   launch_len = default_args(launch_args, sizeof launch_args, &argc);
@@ -1129,8 +1131,8 @@ void program_ended(void) {
   if (exec_parked()) {
     /* the program that started it goes on (step 2c) */
     con_log(last_status ? CON_RED : CON_GREEN, "%s returned, exit status %d: back to %s", last_path,
-            (int)last_status, parked_path);
-    memcpy(last_path, parked_path, sizeof last_path);
+            (int)last_status, parked_top());
+    memcpy(last_path, parked_top(), sizeof last_path);
     exec_unpark((int)last_status);
     status_state(exec_in_shell() ? ST_MENU : ST_RUNNING, last_path);
     mx_debug_flush();
