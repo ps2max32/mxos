@@ -1017,6 +1017,9 @@ static void after_program(void);
 
 int main(int argc, char **argv) {
   tlb_restore();
+  /* PCSX2's TLB ignores the ASID: the kernel's way round it (kproc.c), in the
+     PS2 build too when it runs there */
+  tlb_emu = tlb_ignores_asid();
 #ifdef MXLINK_EMU
   emu_main();
 #endif

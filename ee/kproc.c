@@ -59,11 +59,14 @@ static int handler_prev = -1;
 static u32 front_asid, front_core_off;
 static struct kvu0 vu_front;
 static u32 switches;
-#ifdef MXLINK_EMU
-#define EMU_ASID(a) tlb_emu_asid(a) /* PCSX2's TLB: tlb.c */
-#else
-#define EMU_ASID(a)
-#endif
+/* PCSX2's TLB (tlb.c: the emu build, or the PS2 build where the kernel's
+   start found the ASID ignored) */
+extern int tlb_emu;
+#define EMU_ASID(a)                                                                        \
+  do {                                                                                     \
+    if (tlb_emu)                                                                           \
+      tlb_emu_asid(a);                                                                     \
+  } while (0)
 
 /* to the space of side to (-1: the front's), through the front's: each
    side's copy of the state is exchanged with the front's */

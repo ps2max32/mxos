@@ -200,9 +200,10 @@ void kvideo_init(void);
 int kvideo_crtc_set(const struct mx_crtc *c);
 void kvideo_board_offset(int code, int *dx, int *dy);
 int tlb_core_map(u32 va_end, u32 off);
-#ifdef MXLINK_EMU
+/* PCSX2's TLB ignores the ASID (tlb.c): measured at the start, the way round */
 void tlb_emu_asid(u32 asid);
-#endif
+extern int tlb_emu;
+int tlb_ignores_asid(void);
 void tlb_core_keep(u32 n, u32 va_end);
 /* The BIOS's entry for mxlink's code, for a loader that writes there. */
 void tlb_writable(void);

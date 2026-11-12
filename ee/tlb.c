@@ -182,11 +182,12 @@ static int over_side(u32 i) {
   return lo < keep_end && lo + 2 * page > 0x00100000u;
 }
 
-#ifdef MXLINK_EMU
 /* PCSX2 maps an entry when it is written and never looks at its ASID: of two
    entries at one address, the last written is the one used. At a process
    switch (kproc.c), the entries of the process that runs next (its ASID, G =
-   0) are written again, so its are the ones used, as on the PS2. */
+   0) are written again, so its are the ones used, as on the PS2. Only where
+   the TLB is so (tlb_ignores_asid): the emu build, or the PS2 build on PCSX2. */
+int tlb_emu;
 void tlb_emu_asid(u32 asid) {
   for (u32 i = TLB_FIRST; i < TLB_N; i++) {
     u32 pm, hi, lo0, lo1;
@@ -196,4 +197,32 @@ void tlb_emu_asid(u32 asid) {
     tlb_write(i, pm, hi, lo0, lo1);
   }
 }
-#endif
+
+/* Does the TLB look at the ASID? Two entries at one address (in the last two
+   slots, unused: the BIOS's kseg3 ones), each under an ASID of its own, onto
+   two of the kernel's pages whose first words differ; read under the first
+   ASID: the PS2 gives the first page's word (probe/p33_asid.c), PCSX2 the
+   second's, the last written. All put back. Interrupts off. 1: it does not. */
+int tlb_ignores_asid(void) {
+  const u32 va = 0x7F000000u, a = 0x88000u;
+  u32 b = a + 0x1000u;
+  while (b < 0xC0000u && *(volatile u32 *)(uintptr_t)b == *(volatile u32 *)(uintptr_t)a)
+    b += 0x1000u;
+  if (b >= 0xC0000u)
+    return 0; /* no two pages to tell apart: as the PS2 */
+  u32 want_a = *(volatile u32 *)(uintptr_t)a, want_b = *(volatile u32 *)(uintptr_t)b;
+  int was = mx_di();
+  u32 old = mx__asid, s[2][4];
+  for (u32 k = 0; k < 2; k++)
+    tlb_read(TLB_N - 2 + k, &s[k][0], &s[k][1], &s[k][2], &s[k][3]);
+  tlb_write(TLB_N - 2, 0, va | 0x41u, a >> 12 << 6 | LO_CORE, 0);
+  tlb_write(TLB_N - 1, 0, va | 0x42u, b >> 12 << 6 | LO_CORE, 0);
+  mx__asid = 0x41u;
+  __asm__ volatile("mtc0 %0, $10\n\tsync.p" : : "r"(mx__asid) : "memory");
+  u32 got = *(volatile u32 *)(uintptr_t)va;
+  mx__asid = old;
+  for (u32 k = 0; k < 2; k++)
+    tlb_write(TLB_N - 2 + k, s[k][0], s[k][1], s[k][2], s[k][3]);
+  mx_irq_restore(was);
+  return got == want_b && got != want_a;
+}
