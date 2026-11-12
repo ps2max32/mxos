@@ -47,6 +47,8 @@ include $(PS2MAX)/libs/maxsdk/mk/maxsdk.mk
 
 # SHOT=1: for tests on PCSX2, the screen saved where the start stops
 CFLAGS += $(if $(SHOT),-DMXLINK_SHOT)
+# READY_END=1: for tests on PCSX2, the test end marker once the start is done (ready)
+CFLAGS += $(if $(READY_END),-DMXLINK_READY_END)
 # maxsdk's protocols with its IOP modules (mxpad.h)
 CFLAGS += -I$(PS2MAX)/libs/maxsdk/common/include
 # EMU=1 (make emu): the kernel for PCSX2, without network, IOP

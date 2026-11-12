@@ -149,6 +149,13 @@ static void iop_status_send(u32 st) {
 
 void status_state(int st, const char *what) {
   state = st;
+#ifdef MXLINK_READY_END
+  /* make READY_END=1 (PCSX2): the start is done, ready for a host: the run's end */
+  if (st == ST_READY) {
+    mx_printf("mxkernel: ready\n");
+    mx_printf("@@PS2TEST_END@@ status=0\n");
+  }
+#endif
   if (st == ST_READY)
     iop_status_send(1);
   else if (st == ST_RUNNING)
