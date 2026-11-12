@@ -147,12 +147,14 @@ static void iop_status_send(u32 st) {
   mx_sif_call(&npm, NPM_STATUS, &iop_status, sizeof iop_status, (void *)MX_UNCACHED(answer), 0);
 }
 
+static void counts_report(const u32 *n, const char *what, int log);
 void status_state(int st, const char *what) {
   state = st;
 #ifdef MXLINK_READY_END
   /* make READY_END=1 (PCSX2): the start is done, ready for a host: the run's end */
   if (st == ST_READY) {
     mx_printf("mxkernel: ready\n");
+    counts_report(ksys_kernel_counts(), "the kernel's own BIOS syscalls since its boot", 0);
     mx_printf("@@PS2TEST_END@@ status=0\n");
   }
 #endif
@@ -280,8 +282,7 @@ static void bios_calls_report(int log) {
 
 static void restart(void) __attribute__((noreturn));
 static void restart(void) {
-  extern char mxlink_start[], _gp[];
-  char *argv[1] = {boot_path};
+  extern char mxlink_start[];
   restarts++;
   mx_debug_flush();
   mx_dcache_flush_all();
@@ -301,9 +302,10 @@ static void restart(void) {
   else
     kirq_off();
   mx__sif_dma_give(); /* the BIOS's SIF1 ring again, for whoever runs next */
-  if (restarts > 1) {
-    /* mx OS plan 2h-4c: after the first start (which sheds the loader's
-       threads and handlers by ExecPS2) the kernel starts itself again:
+  {
+    /* mx OS plan 2h-4c, and since 2h-4e-2 the first start too (the loader,
+       mxboot or PCSX2, started the kernel by ExecPS2 itself, so it has no
+       threads or handlers of the loader's to shed): the kernel starts itself again:
        mxlink_start puts .data back, crt0 clears .bss and sets the stack, on
        the BIOS thread it runs on (its threads and semaphores are its own:
        none of the BIOS's to drop). In user mode, interrupts off, as
@@ -320,9 +322,6 @@ static void restart(void) {
                      : "memory");
     __builtin_unreachable();
   }
-  mx_bios_exec_ps2(mxlink_start, _gp, 1, argv);
-  for (;;)
-    ;
 }
 
 void mxlink_restart(void) {
