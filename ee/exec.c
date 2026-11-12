@@ -278,8 +278,14 @@ static int kvm_init(const struct mx_vm_config *c) {
   struct vm_space *s = mx__vm_space_new();
   if (!s)
     return -1;
+  mx__vm_space_limit(s, c->frames); /* its frames: at most what it asks for */
   mx__vm_space_switch(s);
   front_space = s;
+  /* its swap file, if the VM has none yet (the one that turned it on) */
+  if (mx__vm_swap_open(c->swap) < 0) {
+    kvm_front_gone();
+    return -1;
+  }
   return 0;
 }
 static void kvm_shutdown(void) {
@@ -851,7 +857,8 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   int dropped = 0;
   if (!core_off_at && exec_parked()) {
     if (exec_park_drop() < 0)
-      return fail(fd, path, "takes all memory, and a service and a program wait above it");
+      return fail(fd, path, vm_kept ? "takes all memory, and a program with VM waits or runs beside"
+                                    : "takes all memory, and a service and a program wait");
     con_log(CON_YELLOW, "  %s takes all memory: the program that started it ends", path);
     dropped = 1;
   }

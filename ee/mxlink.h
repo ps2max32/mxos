@@ -120,6 +120,8 @@ struct vm_space *mx__vm_space_new(void);
 void mx__vm_space_switch(struct vm_space *s);
 struct vm_space *mx__vm_space_now(void);
 void mx__vm_space_free(struct vm_space *s);
+void mx__vm_space_limit(struct vm_space *s, u32 bytes);
+int mx__vm_swap_open(const char *cfg_swap);
 void mx__vm_shutdown(void);
 void mx__vm_swap_close(void);
 void mx__vm_tlb_again(void);
