@@ -1,9 +1,8 @@
-# .github/workflows/ps2.yml of ps2max32/mxos, the kernel of mx OS (still the
-# loader with the host link in one).
-# Every push and PR: build MXKERNEL.ELF (to install) and mxkernel-high.elf (to
-# try a build from a running loader) with ghcr.io/ps2max32/ps2max, the IOP
-# modules (iop/, and ps2link.irx from ps2max32/mxlink) with its clang and ld.lld; both as an artifact. A tag v*:
-# also a GitHub release with them.
+# .github/workflows/ps2.yml of ps2max32/mxos (template: ci/mxos.yml of ps2max32/docker).
+# Builds with the commits its ps2max.deps names (LLVM, maxsdk, ...), through
+# the reusable build of ps2max32/docker. Every push and PR: MXKERNEL.ELF (to install) and
+# mxkernel-high.elf, with ps2link.irx from the mxlink of its ps2max.deps, as
+# an artifact; a tag v*: also a GitHub release with them.
 name: ps2
 
 on:
@@ -15,29 +14,10 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: ubuntu-26.04
-    container: ghcr.io/ps2max32/ps2max:latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/checkout@v7
-        with:
-          repository: ps2max32/mxlink
-          path: mxlink
-      - name: Build
-        run: make -j$(nproc) OUT=$PWD/out MXLINK=$PWD/mxlink all high
-      - uses: actions/upload-artifact@v7
-        with:
-          name: mxkernel-${{ github.sha }}
-          path: |
-            out/MXKERNEL.ELF
-            out/mxkernel-high.elf
-          if-no-files-found: error
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          apk add --no-cache github-cli
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes \
-            out/MXKERNEL.ELF out/mxkernel-high.elf
+  ps2:
+    uses: ps2max32/docker/.github/workflows/build.yml@main
+    with:
+      build: make -j$(nproc) OUT=$PWD/out all high
+      artifacts: |
+        out/MXKERNEL.ELF
+        out/mxkernel-high.elf

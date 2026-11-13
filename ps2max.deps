@@ -1,0 +1,6 @@
+# The commits of the ps2max repos this one builds with, for the CI
+# (ps2max32/docker: scripts/fetch-deps.sh). Written by scripts/deps.sh of
+# ps2max32/docker from a ps2max tree: the ones it was built and tested with.
+LLVM_REF=b0afe6262a44b4902b9eb53b9f1c98fa02744fe0
+MAXSDK_REF=08d3ff3787fb0cf31aa27d91a6a702c02964dc12
+MXLINK_REF=6277e22c7aebcfefd5c5bd4055872456e09c3598
