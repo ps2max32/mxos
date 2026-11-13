@@ -168,6 +168,7 @@ $(KERNEL_LIB): $(MX_LIB)
 $(OUT)/mxkernel.elf: MX_LD = ee/resident.ld
 $(OUT)/mxkernel.elf: $(OBJS) $(KERNEL_LIB) $(MX_CRT0) ee/resident.ld
 	$(call link,$@,$(LOW_LDFLAGS) $(MX_CRT0) $(OBJS) $(KERNEL_LIB))
+	tools/wait-stack-check.sh $(LLVM) $@ || { rm -f $@; exit 1; }
 
 # the name ps2link has on the PS2's storage
 $(OUT)/MXKERNEL.ELF: $(OUT)/mxkernel.elf

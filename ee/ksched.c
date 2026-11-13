@@ -82,6 +82,7 @@ static void made_ready(struct kth *t) {
 }
 
 /* with interrupts off (or at the switch): the next thread */
+u32 ksched_dbg_none[6];
 struct kctx *ksched_pick(void) {
   struct kth *c = cur(), *best = 0;
   ksched_need = 0;
@@ -93,6 +94,16 @@ struct kctx *ksched_pick(void) {
       continue;
     if (!best || t->prio < best->prio || (t->prio == best->prio && t->seq < best->seq))
       best = t;
+  }
+  if (!best) {
+    /* no thread can run, not even the idle one: what it is (kept for the
+       next start's log), then the crash below ends the program */
+    struct kth *t = &th[idle_id];
+    ksched_dbg_none[0]++;
+    ksched_dbg_none[1] = (u32)t->state | (u32)t->suspended << 8 | (u32)t->held << 16 | (u32)t->proc << 24;
+    ksched_dbg_none[2] = (u32)id_of(c) | (u32)c->proc << 8 | (u32)c->state << 16 | (u32)(handler_proc + 1) << 24;
+    ksched_dbg_none[3] = (u32)(u16)t->sema | (u32)idle_id << 16;
+    ksched_dbg_none[4] = t->c.epc, ksched_dbg_none[5] = (u32)t->c.r[31][0];
   }
   best->state = T_RUN;
   ksched_cur = &best->c;
@@ -308,9 +319,37 @@ static int k_refer_thread_status(int id, void *status) {
   return s;
 }
 
+/* A wait asked for inside an interrupt handler: it would put the thread the
+   interrupt came in to sleep, and when that is the idle thread no thread
+   is left to run (found 2026-11-13: ksched_pick crashed at address 0x2c0).
+   The first one is kept for the report of a hang (the handler, its
+   process, the thread, the semaphore or -1 for a sleep, how many so far). */
+static int handler_now; /* the handler being run, 0: none */
+u32 ksched_dbg_wait[6];
+/* Inlined, and nothing called: k_sleep_thread and k_wait_sema run as syscall
+   handlers on the kernel's one syscall stack and switch threads from there
+   (switch_now), so they may keep nothing on that stack over the switch:
+   the next thread's syscalls write over it. As a call this made
+   k_wait_sema save ra and s0-s3 there, and a program that started another
+   and waited came back to address 1 (vm26_launch, k29_stay). */
+static inline __attribute__((always_inline)) int handler_wait(struct kth *c, int sema) {
+  if (!handler_now)
+    return 0;
+  if (!ksched_dbg_wait[5]++) {
+    ksched_dbg_wait[0] = (u32)handler_now, ksched_dbg_wait[1] = (u32)handler_proc;
+    ksched_dbg_wait[2] = (u32)id_of(c), ksched_dbg_wait[3] = (u32)sema;
+    ksched_dbg_wait[4] = (u32)handler_now;
+  }
+  return 0; /* only counted: refusing the idle thread's hung the PS2 (the caller waited in a loop) */
+}
+
 static int k_sleep_thread(void) {
   int was = mx_di();
   struct kth *c = cur();
+  if (handler_wait(c, -1)) {
+    mx_irq_restore(was);
+    return -1;
+  }
   if (c->wakeups > 0) {
     c->wakeups--;
     mx_irq_restore(was);
@@ -427,6 +466,10 @@ static int k_wait_sema(int id) {
     return id;
   }
   struct kth *c = cur();
+  if (handler_wait(c, id)) {
+    mx_irq_restore(was);
+    return -1;
+  }
   c->state = T_SEMA;
   c->sema = (s16)id;
   c->seq = ++seq; /* queued in order */
@@ -666,7 +709,9 @@ u32 ksched_dispatch(int line, u32 epc) {
           continue;
         int sw = kproc_handler_enter(handler[i].proc);
         handler_proc = handler[i].proc;
+        handler_now = i;
         int r = handler[i].fn(n, handler[i].arg, (void *)(uintptr_t)epc);
+        handler_now = 0;
         handler_proc = -1;
         if (sw)
           kproc_handler_leave();

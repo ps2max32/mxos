@@ -415,7 +415,7 @@ void mx__crash_kept(struct mx_crash *c) {
    (exec.c). Not logged at once: the log's host copy goes through the SIF,
    which may be what is stuck. */
 #define HANG_LINES 48
-static char hang_kept[HANG_LINES][100] KEPT = {{0}};
+static char hang_kept[HANG_LINES][112] KEPT = {{0}};
 static u32 hang_n KEPT = 0;
 void hang_note(const char *line) {
   if (hang_n < HANG_LINES)
@@ -427,6 +427,15 @@ void hang_threads(void) {
   for (int i = 1; i < 64; i++)
     if (ksched_describe(i, line, sizeof line))
       hang_note(line);
+  /* the SIF: what came in last, who sleeps on what */
+  int mx__sif_dbg_line(u32 i, char *buf, u32 size);
+  for (u32 i = 0;; i++) {
+    int r = mx__sif_dbg_line(i, line, sizeof line);
+    if (!r)
+      break;
+    if (r > 0)
+      hang_note(line);
+  }
   /* the VM's last exception and the TLB: a miss that comes again and again */
   extern u32 mx__vm_dbg_last[12];
   u32 mx__vm_dbg_slot(u32 i);
@@ -441,6 +450,22 @@ void hang_threads(void) {
   mx_snprintf(line, sizeof line, "  space %u asid %u status %08x npages %u refills %u; now BadVAddr %08x EntryHi %08x "
               "EPC %08x asid %u", d[8], d[9], d[10], d[11], mx__vm_dbg_refills(), bad, hi, epc, (u32)mx__asid);
   hang_note(line);
+  {
+    extern u32 ksched_dbg_wait[6];
+    const u32 *t = ksched_dbg_wait;
+    if (t[5]) {
+      mx_snprintf(line, sizeof line, "waits inside a handler: %u; first: handler id %u (proc %u, %u) thread %u sema %d",
+                  t[5], t[0], t[1], t[4], t[2], (int)t[3]);
+      hang_note(line);
+    }
+  }
+  {
+    extern u32 mx__vm_dbg_stale[1 + 4 * 6];
+    const u32 *t = mx__vm_dbg_stale;
+    mx_snprintf(line, sizeof line, "VM stale entries %u; first: kind %u page %u entry %u held %u space %u at %u",
+                t[0], t[1], t[2], t[3], t[4], t[5], t[6]);
+    hang_note(line);
+  }
   for (u32 i = 0; i < 48; i++) {
     u32 o[4];
     tlb_dump_entry(i, o);
@@ -452,6 +477,35 @@ void hang_threads(void) {
   }
 }
 void hang_log(void) {
+  /* the last program's crash (its report to the host may be lost) and the
+     VM's pool, for the host's log */
+  if (crash_return && crash_return == returns)
+    con_log(CON_RED, "last crash: %s at %08x, address %08x, ra %08x, sp %08x, trace %08x %08x %08x %08x",
+            crash.what ? crash.what : "?", crash.epc, crash.badvaddr, crash.ra, crash.sp, crash.trace[0],
+            crash.trace[1], crash.trace[2], crash.trace[3]);
+  {
+    extern u32 ksched_dbg_none[6];
+    static u32 none_shown KEPT = 0;
+    const u32 *t = ksched_dbg_none;
+    if (t[0] != none_shown)
+      con_log(CON_RED, "no thread to run (%u times): idle %08x cur %08x sema/id %08x idle epc %08x ra %08x", t[0],
+              t[1], t[2], t[3], t[4], t[5]);
+    none_shown = t[0];
+  }
+  if (mx_vm_active()) {
+    struct mx_vm_stats v;
+    mx_vm_stats(&v);
+    con_log(CON_GREY, "VM pool: %u frames, %u free, %u pinned", v.frames, v.free_frames, v.pinned_frames);
+  }
+  {
+    extern u32 ksched_dbg_wait[6];
+    static u32 shown KEPT = 0;
+    const u32 *t = ksched_dbg_wait;
+    if (t[5] != shown)
+      con_log(CON_YELLOW, "waits inside a handler: %u; first: handler id %u (proc %u, %u) thread %u sema %d",
+              t[5], t[0], t[1], t[4], t[2], (int)t[3]);
+    shown = t[5];
+  }
   if (!hang_n)
     return;
   con_log(CON_YELLOW, "before the restart (a reset while a program ran):");
