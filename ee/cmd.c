@@ -260,6 +260,10 @@ static void cmd_thread(void *arg) {
       continue;
     switch (cmd) {
     case PKO_RESET_CMD:
+      /* a program still running: what its threads were doing, for the host
+         after the restart (a hang's report) */
+      if (exec_running() && !exec_in_shell())
+        hang_threads();
       con_log(CON_YELLOW, "reset");
       mxlink_restart();
       break;

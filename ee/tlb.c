@@ -226,3 +226,10 @@ int tlb_ignores_asid(void) {
   mx_irq_restore(was);
   return got == want_b && got != want_a;
 }
+
+/* For the report of a hang (main.c): TLB entry i as it is. */
+void tlb_dump_entry(u32 i, u32 o[4]) {
+  int was = mx_di();
+  tlb_read(i, &o[0], &o[1], &o[2], &o[3]);
+  mx_irq_restore(was);
+}

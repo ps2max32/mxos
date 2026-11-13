@@ -772,6 +772,9 @@ int exec_elf(int argc, const char *args, u32 args_len) {
             exec_returns(), (int)exec_last_status());
   else
     con_log(CON_WHITE, "exec %s", path);
+  /* a hang's report (main.c), with the host listening: its next program */
+  if (!strncmp(path, "host:", 5))
+    hang_log();
 
   static struct ehdr eh;
   static struct phdr ph[MAX_PHDRS];
@@ -822,8 +825,19 @@ int exec_elf(int argc, const char *args, u32 args_len) {
       return fail(fd, path, "it would overwrite the kernel");
     }
   }
-  if (over_self && !vm)
+  if (over_self && !vm) {
+    /* with a service beside or a VM kept, the replace would take the TLB
+       entry the VM's tables are read through (MX_PHYS_WIN) and stage the
+       new kernel in the VM's frames: the old kernel crashed at the next
+       vblank. The kernel restarts first and starts this again, before any
+       service: nothing beside, no VM */
+    if (exec_parked() || vm_kept) {
+      mx_fio_close(fd);
+      con_log(CON_YELLOW, "  a kernel: first the restart, without the services");
+      mxlink_takeover(argc, args, args_len);
+    }
     return exec_replace(fd, path, &eh, ph);
+  }
   /* mx OS plan 2h-2: the kernel runs MXOS programs only (libmxk, kernel
      version 10 or later), and other kernels (above); a standalone ELF (libmx,
      ps2sdk's, a loader such as ps2link) is started by mxboot or a legacy

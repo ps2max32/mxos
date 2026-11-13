@@ -793,3 +793,20 @@ void ksched_init(void) {
   idle_id = k_create_thread(&ip);
   k_start_thread(idle_id, 0);
 }
+
+/* For the report of a hang (main.c's hang_note, at the host's reset): thread
+   i's line into buf, 0 when there is none. Any thread, interrupts off or
+   not: only reads. */
+int ksched_describe(int i, char *buf, u32 size) {
+  if (i < 1 || i > NTHREADS || th[i].state == T_FREE || th[i].state == T_DORMANT)
+    return 0;
+  static const char *const names[] = {"free", "dormant", "ready", "run", "sleep", "sema"};
+  const struct kth *t = &th[i];
+  int n = mx_snprintf(buf, size, "thread %d proc %u %s%s%s prio %u epc %08x ra %08x sp %08x", i, t->proc,
+                      names[t->state], t->suspended ? " suspended" : "", t->held ? " held" : "", t->prio,
+                      t->c.epc, t->c.r[31][0], t->c.r[29][0]);
+  if (t->state == T_SEMA && t->sema >= 0 && (u32)n < size)
+    mx_snprintf(buf + n, size - (u32)n, " sema %d (count %d, %d waiting)", t->sema, (int)sema[t->sema].count,
+                (int)sema[t->sema].waiting);
+  return 1;
+}

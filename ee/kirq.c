@@ -22,10 +22,18 @@
 
 #include "mxlink.h"
 
-#define TABLE 0x80015380u
+/* The BIOS kernel's data, by its addresses in ROM 2.00 (docs/bios.md). Other
+   ROMs have the same kernel with its data elsewhere (ROM 2.20: 0x5C0 higher;
+   the code is at the same addresses up to 0x8000_75B8): bios_delta is the
+   difference, read from the BIOS's own vectors (bios_find), and every
+   address of its data goes through BIOS(). */
+static u32 bios_delta __attribute__((section(".kept")));
+static u32 bios_threads_ok __attribute__((section(".kept")));
+#define BIOS(a) ((a) + bios_delta)
+#define TABLE BIOS(0x80015380u)
 #define POKE_SYSCALL 0x69 /* RFU105: unused by the BIOS (0x5C is EnableIntcHandler) */
 /* the BIOS's exception table (entry 8: the syscall dispatcher) */
-#define EXC_TABLE 0x80015340u
+#define EXC_TABLE BIOS(0x80015340u)
 
 void kirq_intc(void);
 void kirq_dmac(void);
@@ -100,7 +108,7 @@ u32 kirq_bios_count(void) {
    (through kseg0) to a, 3 from a to physical v (a: the caller's memory,
    mapped under its ASID in kernel mode too); 4 reads the halfword at a, 5
    writes v there (registers in kseg1, kvideo.c); 6 writes code at
-   physical v (kvec_write) */
+   physical v (kvec_write); 7 reads the byte at a, 8 writes v there */
 static u32 k_poke(u32 a, u32 v, u32 op, u32 n) {
   if (op == 6) {
     /* code: n bytes (whole lines) from a to physical v, then out of the
@@ -118,6 +126,12 @@ static u32 k_poke(u32 a, u32 v, u32 op, u32 n) {
     }
     mx_icache_invalidate_all();
     return n;
+  }
+  if (op == 7)
+    return *(volatile u8 *)a;
+  if (op == 8) { /* not read back: a register may be a queue */
+    *(volatile u8 *)a = (u8)v;
+    return 0;
   }
   if (op >= 4) {
     if (op == 5)
@@ -232,6 +246,43 @@ void kirq_keep(void) {
   on = 0;
 }
 
+/* Where this ROM's kernel has its data: the BIOS's common vector takes its
+   handler from the exception table (0x8000_0198: lw k0, table(k0) after lui
+   k0, 0x8001) and its interrupt vector from the table 0x40 after it
+   (0x8000_0240). The thread table's addresses are checked against the code
+   that uses them (0x8000_32C4: lw k0, now; 0x8000_3998: sw a1, threads):
+   without them SetupThread's block is left alone. After the kernel's own
+   vectors are in (a restart) the kept values stand. 0, or -1: not a kernel
+   this one knows. */
+u32 mx__bios_delta;
+static int bios_find(void) {
+  u32 e = kcall(0x80000198u, 0, 0), i = kcall(0x80000240u, 0, 0);
+  if ((e >> 16) != 0x8F5Au || (i >> 16) != 0x8F5Au) {
+    /* not the BIOS's code there (a kernel's own vectors left in): ROM
+       2.00's addresses, and the tables' check below decides */
+    bios_delta = 0, bios_threads_ok = 1, mx__bios_delta = 0;
+    return 0;
+  }
+  u32 exc = 0x80010000u + (u32)(s32)(s16)e, irq = 0x80010000u + (u32)(s32)(s16)i;
+  if (irq - exc != 0x40 || (exc & 3))
+    return -1;
+  bios_delta = exc - 0x80015340u;
+  bios_threads_ok = (kcall(0x800032C4u, 0, 0) & 0xFFFF) == ((0x55ACu + bios_delta) & 0xFFFF) &&
+                    (kcall(0x80003998u, 0, 0) & 0xFFFF) == ((0xA650u + bios_delta) & 0xFFFF);
+  mx__bios_delta = bios_delta;
+  return 0;
+}
+u32 kirq_bios_delta(void) { return bios_delta; }
+/* Said once the screen is there (main), not from kirq_on: a line of the
+   log at the kernel's first steps goes to the tty, which sets up the SIF
+   before the kernel has its ring and threads, and the start hung there
+   (ROM 2.20) */
+void kirq_report(void) {
+  if (bios_delta)
+    con_log(CON_GREY, "irq: the BIOS's data %x higher than ROM 2.00's%s", bios_delta,
+            bios_threads_ok ? "" : "; its thread table not found");
+}
+
 void kirq_on(void) {
   if (on)
     return;
@@ -245,12 +296,17 @@ void kirq_on(void) {
   mx__kpeek32 = sif_peek;
   if (kirq_kept()) {
     /* after the kernel's own restart: all as it was (2h-4e-1) */
+    mx__bios_delta = bios_delta;
     on = 1;
     return;
   }
   /* the poke's bootstrap; it stays the BIOS's syscall after kirq_off */
   mx_bios_set_syscall(POKE_SYSCALL, (void *)k_poke);
   u32 my_intc = kseg0(kirq_intc), my_dmac = kseg0(kirq_dmac), my_sys = kseg0(ksys_entry);
+  if (bios_find() < 0) {
+    con_log(CON_RED, "irq: the BIOS's vectors not as expected: no kernel interrupts");
+    return;
+  }
   /* the BIOS's tables, the kernel's from them; its handlers of the kernel's
      entries, where they go on to (not the kernel's: an older kernel's
      kirq_off put them back) */
@@ -402,12 +458,12 @@ void kirq_off(void) {
    program: argc 0, nothing copied. maxsdk's programs take their arguments
    from the kernel's (struct mx_loader_args); SetupThread's were the kernel's
    own anyway. */
-#define BIOS_THREAD_NOW 0x800155ACu
-#define BIOS_THREADS 0x8001A650u
+#define BIOS_THREAD_NOW BIOS(0x800155ACu)
+#define BIOS_THREADS BIOS(0x8001A650u)
 #define BIOS_THREAD_SIZE 0x4Cu
 #define BIOS_THREAD_ARGC 0x24u
 void kirq_setup_args_clear(void) {
-  if (!on)
+  if (!on || !bios_threads_ok)
     return;
   u32 tid = kcall(BIOS_THREAD_NOW, 0, 0);
   if (tid > 0 && tid < 256)
@@ -420,6 +476,11 @@ u32 kpeek32(u32 a) { return on ? kcall(a, 0, 0) : 0; }
 void kpoke32(u32 a, u32 v) {
   if (on)
     kcall(a, v, 1);
+}
+u32 kpeek8(u32 a) { return on ? kcall4(a, 0, 7, 0) : 0; }
+void kpoke8(u32 a, u32 v) {
+  if (on)
+    kcall4(a, v, 8, 0);
 }
 u32 kpeek16(u32 a) { return on ? kcall4(a, 0, 4, 0) : 0; }
 void kpoke16(u32 a, u32 v) {

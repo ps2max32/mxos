@@ -312,6 +312,10 @@ static void restart(void) {
        ExecPS2 starts it; .kept stays. */
     static char *argv_kept[1] KEPT;
     argv_kept[0] = boot_path;
+#ifdef KTRACE
+    if (restarts == 1)
+      MX_R64(MX_GS_BGCOLOR) = 0xffffff;
+#endif
     mx_dcache_flush_all();
     mx_icache_invalidate_all();
     register u32 a0 __asm__("$4") = 1;
@@ -406,8 +410,59 @@ void mx__crash_kept(struct mx_crash *c) {
   mx__fio_crash();
 }
 
+/* What a hang left behind, for the host: lines kept over the restart (a
+   host's reset of a program that hangs) and logged when the host starts its next program
+   (exec.c). Not logged at once: the log's host copy goes through the SIF,
+   which may be what is stuck. */
+#define HANG_LINES 48
+static char hang_kept[HANG_LINES][100] KEPT = {{0}};
+static u32 hang_n KEPT = 0;
+void hang_note(const char *line) {
+  if (hang_n < HANG_LINES)
+    mx_snprintf(hang_kept[hang_n++], sizeof hang_kept[0], "%s", line);
+}
+/* the threads as they are, at the host's reset while a program runs */
+void hang_threads(void) {
+  char line[112];
+  for (int i = 1; i < 64; i++)
+    if (ksched_describe(i, line, sizeof line))
+      hang_note(line);
+  /* the VM's last exception and the TLB: a miss that comes again and again */
+  extern u32 mx__vm_dbg_last[12];
+  u32 mx__vm_dbg_slot(u32 i);
+  u32 mx__vm_dbg_refills(void);
+  void tlb_dump_entry(u32 i, u32 o[4]);
+  const u32 *d = mx__vm_dbg_last;
+  u32 bad, hi, epc;
+  __asm__ volatile("mfc0 %0, $8\n\tmfc0 %1, $10\n\tmfc0 %2, $14" : "=&r"(bad), "=&r"(hi), "=&r"(epc));
+  mx_snprintf(line, sizeof line, "VM last: va %08x epc %08x cause %08x x%u page %u lo %08x fl/fr/pin %08x slot %u",
+              d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
+  hang_note(line);
+  mx_snprintf(line, sizeof line, "  space %u asid %u status %08x npages %u refills %u; now BadVAddr %08x EntryHi %08x "
+              "EPC %08x asid %u", d[8], d[9], d[10], d[11], mx__vm_dbg_refills(), bad, hi, epc, (u32)mx__asid);
+  hang_note(line);
+  for (u32 i = 0; i < 48; i++) {
+    u32 o[4];
+    tlb_dump_entry(i, o);
+    if ((!((o[2] | o[3]) & 2) || (o[2] & o[3] & 1)) && !mx__vm_dbg_slot(i))
+      continue; /* not valid or global (the BIOS's, a core), and not the VM's */
+    mx_snprintf(line, sizeof line, "TLB %2u: pm %05x hi %08x lo %08x %08x page+1 %u", i, o[0] >> 12, o[1], o[2],
+                o[3], mx__vm_dbg_slot(i));
+    hang_note(line);
+  }
+}
+void hang_log(void) {
+  if (!hang_n)
+    return;
+  con_log(CON_YELLOW, "before the restart (a reset while a program ran):");
+  for (u32 i = 0; i < hang_n && i < HANG_LINES; i++)
+    con_log(CON_YELLOW, "  %s", hang_kept[i]);
+  hang_n = 0;
+}
+
 /* sif.c: a SIF wait of over 3 s (1 the send, 2 the answer). On the screen
-   only: the log's host copy would go through the SIF that is stuck. */
+   and kept for the host (hang_note): the log's host copy would go through
+   the SIF that is stuck. */
 void mx__sif_stuck(int where) {
   extern u32 mx__sif_stuck_detail[8];
   extern u32 mx__sif_rx_log[8][2], mx__sif_rx_n, mx__sif_rx_count, mx__sif_rx_empty, mx__sif_rx_running;
@@ -415,6 +470,11 @@ void mx__sif_stuck(int where) {
   con_line(ROW_LAST + 1, CON_YELLOW, "SIF stuck %s: client %05x fno %x pkt %u busy %04x d/s/sema %x tid %d",
            where == 1 ? "send" : "answer", x[0] & 0xFFFFF, x[2], x[3], x[4], x[5], (int)x[6]);
   char line[2][96];
+  mx_snprintf(line[0], sizeof line[0], "SIF stuck %s: client %05x server %x fno %x pkt %u busy %04x d/s/sema %x",
+              where == 1 ? "send" : "answer", x[0] & 0xFFFFF, x[1], x[2], x[3], x[4], x[5]);
+  hang_note(line[0]);
+  mx_snprintf(line[0], sizeof line[0], "  tid %d, deferred/given up %08x", (int)x[6], x[7]);
+  hang_note(line[0]);
   for (int r = 0; r < 2; r++) {
     u32 n = 0;
     if (r == 0)
@@ -426,6 +486,7 @@ void mx__sif_stuck(int where) {
       n += (u32)mx_snprintf(line[r] + n, sizeof line[r] - n, " %06x/%05x", l[0], l[1] & 0xFFFFF);
     }
     con_line(ROW_LAST + 2 + r, CON_YELLOW, "%s", line[r]);
+    hang_note(line[r]);
   }
 }
 
@@ -1032,6 +1093,19 @@ static void emu_main(void) {
 
 static void after_program(void);
 
+/* make KTRACE=1: the kernel's start as colours on the screen (BGCOLOR with
+   both read circuits off, as mxboot's), for a console where it does not
+   come up: the colour that stays is the last step done. First start: red
+   kirq_on, green the SIF ring, blue the video, yellow the threads, magenta
+   the rest, cyan the configuration, white the restart; after the restart
+   the same steps dark (dark red .. orange), grey before the console. */
+#ifdef KTRACE
+#define KT(first, again) \
+  (MX_R64(MX_GS_PMODE) = (1u << 7) | (1u << 5) | (1u << 2), MX_R64(MX_GS_BGCOLOR) = restarts ? (again) : (first))
+#else
+#define KT(first, again) ((void)0)
+#endif
+
 int main(int argc, char **argv) {
   tlb_restore();
   /* PCSX2's TLB ignores the ASID: the kernel's way round it (kproc.c), in the
@@ -1043,13 +1117,18 @@ int main(int argc, char **argv) {
   /* the kernel's interrupt entry and threads (mx OS plan, step 2d): every
      program is an MXOS one (2h-2) */
   kirq_on();
+  KT(0x0000ff, 0x000080);
   mx__sif_dma_take(); /* SIF1 through maxsdk's ring, not the BIOS's */
+  KT(0x00ff00, 0x008000);
   kvideo_init();      /* the video modes without SetGsCrt */
+  KT(0xff0000, 0x800000);
   ksched_init();
+  KT(0x00ffff, 0x0080ff);
   kmsg_init();
   klog_init();
   mx__timer_init();
   mx__fio_lock_init(); /* every process's threads use the file server */
+  KT(0xff00ff, 0x808080);
   if (!restarts) {
     /* the first start: the loader's IOP, its threads and handlers. Its
        configuration read through the kernel's own threads and SIF ring
@@ -1062,10 +1141,13 @@ int main(int argc, char **argv) {
     memcpy(boot_path, n ? argv[0] : "", n);
     boot_path[n] = 0;
     read_conf();
+    KT(0xffff00, 0);
     restart();
   }
   con_init();
   screen();
+  kirq_report();
+  kvideo_report();
   status_state(ST_BOOT, "IOP");
   mx_debug_sinks(MX_SINK_SIO);
   if (boot_iop() < 0) {

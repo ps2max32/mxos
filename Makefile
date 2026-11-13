@@ -39,7 +39,7 @@ MAXSDK_OUT = $(OUT)/maxsdk
 # its software timers (mx_sleep_us, mx_timer_add) on timer 1, timer 0 lent out
 # (mx_timer_claim: mx_hires)
 export EXTRA_CFLAGS = -Os -ffunction-sections -fdata-sections -DMX_DEBUG_HOLD_BYTES=256 \
-                      -DMX_SOFT_TIMER=1
+                      -DMX_SOFT_TIMER=1 $(if $(KTRACE),-DKTRACE)
 
 # the kernel and its tools are started by the BIOS: standalone (the kernel links libmxkern itself)
 MX_TARGET ?= standalone
@@ -49,6 +49,8 @@ include $(PS2MAX)/libs/maxsdk/mk/maxsdk.mk
 CFLAGS += $(if $(SHOT),-DMXLINK_SHOT)
 # READY_END=1: for tests on PCSX2, the test end marker once the start is done (ready)
 CFLAGS += $(if $(READY_END),-DMXLINK_READY_END)
+# KTRACE=1: the start's steps as screen colours (ee/main.c)
+CFLAGS += $(if $(KTRACE),-DKTRACE)
 # maxsdk's protocols with its IOP modules (mxpad.h)
 CFLAGS += -I$(PS2MAX)/libs/maxsdk/common/include
 # EMU=1 (make emu): the kernel for PCSX2, without network, IOP

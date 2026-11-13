@@ -75,6 +75,7 @@ extern const struct mx_kthreads ksched_kthreads;
 extern struct kctx *ksched_cur;
 extern volatile int ksched_need; /* a better thread is ready: switch at the next chance */
 int ksched_active(void);
+int ksched_describe(int i, char *buf, u32 size);
 void ksched_init(void);
 struct kctx *ksched_pick(void);
 u32 ksched_dispatch(int line, u32 epc);

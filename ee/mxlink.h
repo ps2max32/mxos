@@ -192,6 +192,8 @@ void kirq_keep(void);
 int kirq_is_on(void);
 u32 kpeek32(u32 a);
 void kpoke32(u32 a, u32 v);
+u32 kpeek8(u32 a);
+void kpoke8(u32 a, u32 v);
 u32 kpeek16(u32 a);
 void kpoke16(u32 a, u32 v);
 /* kvideo.c: the CRTC timing without the BIOS (kernel version 22) */
@@ -211,6 +213,13 @@ void tlb_writable(void);
 /* the restart (main.c): the IOP reset and mxlink started again, as ps2link
    does on a reset command */
 void mxlink_restart(void) __attribute__((noreturn));
+/* main.c: lines about a hang, kept over the restart for the host */
+void hang_note(const char *line);
+void hang_threads(void);
+/* what the first steps found, said once the screen is there */
+void kirq_report(void);
+void kvideo_report(void);
+void hang_log(void);
 /* a program's return (<mx/loader.h>'s ret): mxlink started again, the IOP
    kept when the program left it as it was */
 void mxlink_return(int status) __attribute__((noreturn));
