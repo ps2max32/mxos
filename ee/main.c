@@ -409,16 +409,24 @@ void mx__crash_kept(struct mx_crash *c) {
 /* sif.c: a SIF wait of over 3 s (1 the send, 2 the answer). On the screen
    only: the log's host copy would go through the SIF that is stuck. */
 void mx__sif_stuck(int where) {
-  u32 d[8];
-  mx__sif_dma_state(d);
-  con_line(ROW_LAST + 1, CON_YELLOW, "SIF stuck (%s): own %u want %u written %u cur %u",
-           where == 1 ? "send" : "answer", d[0], d[1], d[2], d[3]);
-  con_line(ROW_LAST + 2, CON_YELLOW, "SIF1 CHCR %08x TADR %08x QWC %x MADR %08x D_STAT %08x", d[4],
-           d[5], d[6], d[7], MX_R32(MX_D_STAT));
-#ifdef MXLINK_EMU
-  mx_printf("mxkernel: SIF stuck (%s): own %u written %u cur %u CHCR %08x QWC %x\n",
-            where == 1 ? "send" : "answer", d[0], d[2], d[3], d[4], d[6]);
-#endif
+  extern u32 mx__sif_stuck_detail[8];
+  extern u32 mx__sif_rx_log[8][2], mx__sif_rx_n, mx__sif_rx_count, mx__sif_rx_empty, mx__sif_rx_running;
+  const u32 *x = mx__sif_stuck_detail;
+  con_line(ROW_LAST + 1, CON_YELLOW, "SIF stuck %s: client %05x fno %x pkt %u busy %04x d/s/sema %x tid %d",
+           where == 1 ? "send" : "answer", x[0] & 0xFFFFF, x[2], x[3], x[4], x[5], (int)x[6]);
+  char line[2][96];
+  for (int r = 0; r < 2; r++) {
+    u32 n = 0;
+    if (r == 0)
+      n = (u32)mx_snprintf(line[r], sizeof line[r], "rx %u empty %u run %u:", mx__sif_rx_count, mx__sif_rx_empty,
+                           mx__sif_rx_running);
+    for (int k = 0; k < 4; k++) {
+      u32 i = r * 4 + k, at = (mx__sif_rx_n - 8 + i) % 8; /* oldest first */
+      const u32 *l = mx__sif_rx_log[at];
+      n += (u32)mx_snprintf(line[r] + n, sizeof line[r] - n, " %06x/%05x", l[0], l[1] & 0xFFFFF);
+    }
+    con_line(ROW_LAST + 2 + r, CON_YELLOW, "%s", line[r]);
+  }
 }
 
 int mxlink_crash(struct mx_crash *c) {
@@ -707,7 +715,7 @@ static void sound_off(void) {
     mx_fio_close(fd);
 }
 
-extern void mx__mxio_cleanup(void);
+extern void mx__fio_cleanup(int (*keep)(int fd));
 /* the sockets a program left open: common/include/mxsock.h's MXSOCK_CLOSE_ALL.
    Not through <mx/net.h>, whose buffers do not fit here */
 #define MXSOCK_SID 0x4D58534B
@@ -728,12 +736,9 @@ static void iop_cleanup(void) {
   /* descriptors 0-2 are the tty's; the VM's (its swap file, the ELF and
      mapped files of the programs that go on: a service, one that waits)
      stay */
-  for (int fd = 3; fd < 32 && !iop_silent(); fd++)
-    if (!mx__vm_uses_fd(fd))
-      mx_fio_close(fd);
+  mx__fio_cleanup(mx__vm_uses_fd);
   if (iop_silent())
     return;
-  mx__mxio_cleanup();
   close_sockets();
   if (iop_silent())
     return;

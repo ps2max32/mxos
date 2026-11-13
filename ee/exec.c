@@ -275,7 +275,9 @@ static int kvm_init(const struct mx_vm_config *c) {
     return mx_vm_init(c);
   if (front_space)
     return -1; /* on already */
-  struct vm_space *s = mx__vm_space_new();
+  /* with a swap file (its own or MXOS's) its VM is the size it asks for,
+     128 MiB if it does not say; without one, the first space's (the frames) */
+  struct vm_space *s = mx__vm_space_new(c->swap[0] ? (c->size ? c->size : 128u << 20) : c->size);
   if (!s)
     return -1;
   mx__vm_space_limit(s, c->frames); /* its frames: at most what it asks for */

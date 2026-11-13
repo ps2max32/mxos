@@ -66,8 +66,12 @@ static int sif0_handler(int ch, void *arg, void *addr) {
     mx_sync();
     pkt_new = 1;
     mx_bios_iwakeup_thread(cmd_tid);
+    /* only for a packet taken here: SIF0 has one more handler (sif.c's, for
+       the packets in its own buffer), and starting the channel before that
+       one copied its packet lets the IOP's next packet land on top of it
+       (on the PS2 an RPC's answer was lost that way) */
+    mx__sif_dchain(1);
   }
-  mx__sif_dchain(1);
   return 0;
 }
 

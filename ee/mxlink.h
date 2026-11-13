@@ -116,7 +116,7 @@ void end_unpark_beside(void);
 struct vm_space;
 void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struct vm_space *space);
 /* vm.c's address spaces (mx OS plan, phase 3a) */
-struct vm_space *mx__vm_space_new(void);
+struct vm_space *mx__vm_space_new(u32 size);
 void mx__vm_space_switch(struct vm_space *s);
 struct vm_space *mx__vm_space_now(void);
 void mx__vm_space_free(struct vm_space *s);

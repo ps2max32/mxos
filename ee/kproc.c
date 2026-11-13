@@ -55,7 +55,11 @@ static struct side {
 } sides[MAX_SIDES];
 static int nsides;
 static int loaded = -1; /* the side whose space, state and VU0 are live; -1 the front's */
-static int handler_prev = -1;
+/* the spaces handlers left, the last one's on top: a handler entered inside
+   another (the kernel's timer handler runs in the front's, and a process's
+   timer callback, called by it, in that process's) */
+static int handler_prev[4];
+static int handler_depth;
 static u32 front_asid, front_core_off;
 static struct kvu0 vu_front;
 static u32 switches;
@@ -124,18 +128,23 @@ void kproc_thread(int proc) {
    side's, the others in the front's (the kernel's too: the VM's vblank
    works on the front's VM). The kernel's state of a program with it: what a
    handler calls of the kernel may use it. 1: switched, kproc_handler_leave
-   after it. */
+   after it: back to the space it was entered from. One entered inside
+   another has its own way back (with one way back for both, a side's thread
+   whose own timer came in went on in the front's space, and the PS2 hung). */
 int kproc_handler_enter(int proc) {
   if (!nsides)
     return 0;
   int want = side_of(proc);
-  if (want == loaded)
+  if (want == loaded || handler_depth == (int)(sizeof handler_prev / sizeof handler_prev[0]))
     return 0;
-  handler_prev = loaded;
+  handler_prev[handler_depth++] = loaded;
   switch_to(want, 0);
   return 1;
 }
-void kproc_handler_leave(void) { switch_to(handler_prev, 0); }
+void kproc_handler_leave(void) {
+  if (handler_depth)
+    switch_to(handler_prev[--handler_depth], 0);
+}
 
 /* exec_park, in the side's thread under its ASID (the front's space live),
    its kernel state saved in state (in its core): the live state becomes the
