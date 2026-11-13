@@ -288,6 +288,18 @@ static int kvm_init(const struct mx_vm_config *c) {
     kvm_front_gone();
     return -1;
   }
+  /* its writer thread (clean_frames), which mx_vm_init starts only for the
+     program that turns the VM on: started here it would be this program's
+     and end with it, so it is given to the process that has the VM's lock
+     (the one the VM ends with) */
+  int ids[3];
+  if (mx__vm_writer(c->clean_frames, ids)) {
+    int owner = ksched_sema_proc(ids[2]);
+    if (owner >= 0) {
+      ksched_set_proc(ids[0], owner);
+      ksched_set_sema_proc(ids[1], owner);
+    }
+  }
   return 0;
 }
 static void kvm_shutdown(void) {

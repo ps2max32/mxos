@@ -565,6 +565,16 @@ int ksched_sema_proc(int id) {
   return s ? s->proc : -1;
 }
 
+/* a semaphore made in one process's call for another to keep (the VM's
+   writer: its owner's) */
+int ksched_set_sema_proc(int id, int proc) {
+  struct ksema *s = sema_of(id);
+  if (!s || proc < 0 || proc > 255)
+    return -1;
+  s->proc = (u8)proc;
+  return 0;
+}
+
 /* ---- interrupt handlers: run by kirq() ------------------------------------- */
 
 typedef int (*khandler)(int cause, void *arg, void *addr);

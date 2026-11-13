@@ -2,5 +2,5 @@
 # (ps2max32/docker: scripts/fetch-deps.sh). Written by scripts/deps.sh of
 # ps2max32/docker from a ps2max tree: the ones it was built and tested with.
 LLVM_REF=b0afe6262a44b4902b9eb53b9f1c98fa02744fe0
-MAXSDK_REF=86f7b73c908a71273ffb5a9ef3d04c798676956f
+MAXSDK_REF=258f662e834348a7776d895aad803f9062845c30
 MXLINK_REF=6277e22c7aebcfefd5c5bd4055872456e09c3598
