@@ -103,6 +103,7 @@ ksys_entry:
 	mfc0 $26, $12
 	ori $26, $26, 0x13
 	mtc0 $26, $12
+	sync.l		# the handler's stores done: the instruction returned to may be a CACHE
 	sync.p
 	eret
 	nop
@@ -122,6 +123,7 @@ ksys_entry:
 	lw $31, 0($29)
 	addiu $29, $29, 0x10
 	mtc0 $26, $14
+	sync.l		# the handler's stores done: the instruction returned to may be a CACHE
 	sync.p
 	eret
 	nop
