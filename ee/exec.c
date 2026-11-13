@@ -965,6 +965,10 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     kirq_off();
   user_tid = tid;
   ksys_watch_set(mx__asid); /* its BIOS syscalls counted (step 2h-3) */
+  {
+    void mx__sif_by_reset(void);
+    mx__sif_by_reset(); /* and the calls that wait for the IOP while it runs */
+  }
   if (mx_bios_start_thread(tid, &largs) < 0) {
     user_tid = 0;
     mx_bios_delete_thread(tid);

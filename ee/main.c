@@ -276,6 +276,16 @@ static void counts_report(const u32 *n, const char *what, int log) {
 
 static void bios_calls_report(int log) {
   counts_report(ksys_watch_end(), "BIOS syscalls", log);
+  /* the calls that waited for the IOP while it ran (any process's), to the host */
+  {
+    int mx__sif_by_line(u32 i, char *buf, u32 size);
+    char line[112];
+    for (u32 i = 0; mx__sif_by_line(i, line, sizeof line); i++)
+      if (log)
+        con_log(CON_GREY, "  %s", line);
+      else
+        mx_printf("mxkernel:   %s\n", line);
+  }
   /* the kernel's own (step 2h-4): the debug output only */
   counts_report(ksys_kernel_counts(), "the kernel's own BIOS syscalls since its boot", 0);
 }
