@@ -42,7 +42,7 @@ void kvu0_load(const struct kvu0 *from);
 
 /* those beside, a stack as exec.c's parks (a service, one above it) */
 #define MAX_SIDES 2
-static struct side {
+struct side {
   int proc;
   u32 asid, core_off;
   u8 *state; /* its copy of the kernel's state of a program, in its core
@@ -52,8 +52,12 @@ static struct side {
   u32 keep_n, keep_end; /* tlb_core_keep with it (all below it and its own) */
   struct kvu0 vu;
   struct vm_space *space; /* its VM's address space (phase 3a), 0: none */
-} sides[MAX_SIDES];
+};
+/* each in its own memory (exec_park's record, reached through MX_PHYS_WIN
+   under any ASID), mx OS plan step 4b */
+static struct side *sides[MAX_SIDES];
 static int nsides;
+u32 kproc_rec_size(void) { return (sizeof(struct side) + 63) & ~63u; }
 static int loaded = -1; /* the side whose space, state and VU0 are live; -1 the front's */
 /* the spaces handlers left, the last one's on top: a handler entered inside
    another (the kernel's timer handler runs in the front's, and a process's
@@ -78,12 +82,12 @@ static void switch_to(int to, int vu) {
   if (to == loaded)
     return;
   if (vu) {
-    kvu0_save(loaded >= 0 ? &sides[loaded].vu : &vu_front);
-    kvu0_load(to >= 0 ? &sides[to].vu : &vu_front);
+    kvu0_save(loaded >= 0 ? &sides[loaded]->vu : &vu_front);
+    kvu0_load(to >= 0 ? &sides[to]->vu : &vu_front);
   }
   if (loaded >= 0) {
     /* back to the front's: the side's copy is read at its own addresses */
-    struct side *d = &sides[loaded];
+    struct side *d = sides[loaded];
     EMU_ASID(d->asid);
     end_state_swap(d->state);
     mx__asid_set(front_asid);
@@ -91,7 +95,7 @@ static void switch_to(int to, int vu) {
     EMU_ASID(front_asid);
   }
   if (to >= 0) {
-    struct side *d = &sides[to];
+    struct side *d = sides[to];
     front_asid = mx__asid, front_core_off = mx__core_off;
     mx__asid_set(d->asid);
     mx__core_off = d->core_off;
@@ -101,7 +105,7 @@ static void switch_to(int to, int vu) {
   loaded = to;
   /* the VM's address space with it (vm.c: its TLB entries out, its fast
      refill on the new one); a process without VM leaves the VM as it is */
-  struct vm_space *vsp = to >= 0 ? sides[to].space : exec_front_space();
+  struct vm_space *vsp = to >= 0 ? sides[to]->space : exec_front_space();
   if (vsp)
     mx__vm_space_switch(vsp);
   switches++;
@@ -109,13 +113,13 @@ static void switch_to(int to, int vu) {
 
 static int side_of(int proc) {
   for (int i = 0; proc > 0 && i < nsides; i++)
-    if (sides[i].proc == proc)
+    if (sides[i]->proc == proc)
       return i;
   return -1;
 }
 
 /* the last one beside (0: none) */
-int kproc_side(void) { return nsides ? sides[nsides - 1].proc : 0; }
+int kproc_side(void) { return nsides ? sides[nsides - 1]->proc : 0; }
 u32 kproc_switches(void) { return switches; }
 
 /* ksched_pick, interrupts off: the next thread is of proc */
@@ -151,12 +155,15 @@ void kproc_handler_leave(void) {
    front's new one, as linked, and the side's part of it its own again at
    once, the thread going on. Its core's TLB entries (core_slots, after
    those of the sides below it) kept. */
-void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struct vm_space *space) {
+void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struct vm_space *space,
+                      void *rec) {
   int was = mx_di();
   switch_to(-1, 1); /* its thread is the front's: so it is already */
-  struct side *d = &sides[nsides];
-  u32 below_n = nsides ? sides[nsides - 1].keep_n : 0;
-  u32 below_end = nsides ? sides[nsides - 1].keep_end : 0;
+  struct side *d = rec;
+  memset(d, 0, sizeof *d);
+  sides[nsides] = d;
+  u32 below_n = nsides ? sides[nsides - 1]->keep_n : 0;
+  u32 below_end = nsides ? sides[nsides - 1]->keep_end : 0;
   d->proc = proc;
   d->space = space;
   d->asid = mx__asid, d->core_off = mx__core_off;
@@ -181,13 +188,13 @@ void kproc_side_end(void) {
   if (!nsides)
     return;
   int was = mx_di();
-  struct side *d = &sides[nsides - 1];
+  struct side *d = sides[nsides - 1];
   ksched_proc_hold(d->proc, 1);
   switch_to(-1, 1);
   kvu0_load(&d->vu);
   nsides--;
   if (nsides)
-    tlb_core_keep(sides[nsides - 1].keep_n, sides[nsides - 1].keep_end);
+    tlb_core_keep(sides[nsides - 1]->keep_n, sides[nsides - 1]->keep_end);
   else
     tlb_core_keep(0, 0);
   mx_irq_restore(was);

@@ -75,12 +75,16 @@ struct parked {
   u32 nthreads;
   int proc, dropped;        /* proc_now and proc_dropped */
 };
-static struct parked parked_at[2];
+/* each in the waiting program's own memory (exec_park's record, through
+   MX_PHYS_WIN), mx OS plan step 4b */
+static struct parked *parked_at[2];
+static struct parked parked_none; /* `parked` with none: never used for more than a read */
 static int nparked;
+u32 end_rec_size(void) { return (sizeof(struct parked) + 63) & ~63u; }
 /* given up (end_drop): the next snapshot is its, so its end takes it too */
 static struct parked dropped_one;
 static int drop;
-#define parked parked_at[nparked ? nparked - 1 : 0]
+#define parked (*(nparked ? parked_at[nparked - 1] : &parked_none))
 
 /* the process of the program in front, and of the last one that waits (0:
    none) */
@@ -303,11 +307,13 @@ static void slot_set(const void *base, u32 i, int id) {
    threads suspended, what the kernel knows of it kept. -1: not possible.
    beside (step 2e-2): it goes on beside the other, its handlers and threads
    as they are (the kernel switches to its address space for them, kproc.c). */
-int end_park(int self, int beside) {
+int end_park(int self, int beside, void *rec) {
   if (!tables_known || !tables.intc_entry || !tables.dmac_entry ||
       !program_range(tables.intc_entry, 4) || !program_range(tables.dmac_entry, 4) ||
       nparked == 2)
     return -1;
+  memset(rec, 0, sizeof *parked_at[0]);
+  parked_at[nparked] = rec;
   nparked++;
   for (int i = 0; i < NIDS / 32; i++)
     parked.threads_before[i] = threads_before[i], parked.semas_before[i] = semas_before[i];

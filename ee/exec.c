@@ -233,11 +233,16 @@ struct park_slot {
   struct vm_space *space; /* its VM's address space (vm.c), 0: none */
   void *core_pin;         /* its core, when frames of the VM's pool */
   u32 core_pin_bytes;
+  void *blk; /* this record's block in its core heap (freed at exec_unpark) */
 };
-static struct park_slot parks[MAX_PARK];
+/* Each a record in the waiting program's own core heap (mx OS plan step
+   4b): this slot, end.c's and kproc.c's part, and the copy of its kernel
+   state; reached through MX_PHYS_WIN, so under any ASID. */
+static struct park_slot *parks[MAX_PARK];
+static struct park_slot park_none; /* `park` with none waiting */
 static int npark;
 /* the one the program in front was started by (parks[0] when none waits) */
-#define park parks[npark ? npark - 1 : 0]
+#define park (*(npark ? parks[npark - 1] : &park_none))
 /* the last one back in front (exec_unpark), for its waiting thread */
 static int park_done, park_status;
 
@@ -253,8 +258,8 @@ int exec_vm_kept(void) { return vm_kept; }
 struct vm_space *exec_front_space(void) { return front_space; }
 static struct vm_space *parked_space(void) {
   for (int i = npark - 1; i >= 0; i--)
-    if (parks[i].space)
-      return parks[i].space;
+    if (parks[i]->space)
+      return parks[i]->space;
   return 0;
 }
 /* the program in front is gone (its mx_exit, a crash, a kill): its space and
@@ -311,6 +316,7 @@ static void kvm_shutdown(void) {
 
 /* the program's core heap (maxsdk's src/vm/heap.c, the kernel's copy) */
 void *mx__phys_alloc(u32 bytes, u32 align);
+void mx__phys_free(void *p);
 
 static u32 mem_top(void) {
   return npark ? park.core_phys : MX_MAIN_BYTES & ~(MIB - 1);
@@ -333,8 +339,8 @@ static int last_child, last_child_status;
 static struct park_slot *own_park(void) {
   int proc = ksched_thread_proc(mx_bios_get_thread_id());
   for (int i = npark - 1; i >= 0; i--)
-    if (parks[i].proc == proc)
-      return &parks[i];
+    if (parks[i]->proc == proc)
+      return parks[i];
   return &park;
 }
 void exec_park_wait_set(void) {
@@ -370,7 +376,7 @@ int exec_park_service(void) { return npark && park.service; }
 int exec_service_caller(void) {
   int caller = ksched_thread_proc(mx_bios_get_thread_id());
   for (int i = 0; i < npark; i++)
-    if (parks[i].service && parks[i].proc == caller)
+    if (parks[i]->service && parks[i]->proc == caller)
       return 1;
   return 0;
 }
@@ -430,11 +436,23 @@ int exec_park(int beside) {
   if (npark == MAX_PARK || (npark && !beside && !core_vm) || !core_moved || !on_libmxk ||
       !end_tables_known())
     return -1;
-  struct park_slot *q = &parks[npark];
-  if (!q->state)
-    q->state = mx__phys_alloc(end_state_size(), 64);
-  if (!q->state || end_park(mx_bios_get_thread_id(), beside) < 0)
+  /* its record: in its own heap (the kernel's data has no room for it),
+     before its state is saved, so that the state put back knows the block */
+  u32 n_slot = (sizeof(struct park_slot) + 63) & ~63u, n_end = end_rec_size();
+  u32 n_side = kproc_rec_size(), n_state = end_state_size();
+  u8 *blk = mx__phys_alloc(n_slot + n_end + n_side + n_state, 64);
+  if (!blk)
     return -1;
+  u8 *win = (u8 *)(uintptr_t)(MX_PHYS_WIN + mx_paddr_of(blk).v);
+  struct park_slot *q = (struct park_slot *)win;
+  memset(q, 0, sizeof *q);
+  q->blk = blk;
+  q->state = blk + n_slot + n_end + n_side; /* as before: its core address */
+  if (end_park(mx_bios_get_thread_id(), beside, win + n_slot) < 0) {
+    mx__phys_free(blk);
+    return -1;
+  }
+  parks[npark] = q;
   q->tid = user_tid, q->shell = shell, q->beside = beside;
   /* its VM stays: not saved or set back with the rest (end.c) */
   q->space = core_vm && mx_vm_active() ? mx__vm_space_now() : 0;
@@ -455,7 +473,7 @@ int exec_park(int beside) {
      goes on with its own part of it (kproc_side_begin) */
   if (beside) {
     kproc_side_begin(ksched_thread_proc(mx_bios_get_thread_id()), q->state, core_slots, core_end,
-                     q->space);
+                     q->space, win + n_slot + n_end);
   } else
     end_reset_state();
   user_tid = 0, shell = 0, on_libmxk = 0, core_moved = 0;
@@ -504,7 +522,11 @@ void exec_unpark(int status) {
   park.on = 0;
   int child = park.child, waiter = park.waiter, beside = park.beside;
   ptab_state(park.proc, MX_PROC_FRONT);
+  void *blk = park.blk;
   npark--; /* park is another slot from here (a service's, below it) */
+  /* its record back to its heap (its kernel state, the heap's included, is
+     the live one again) */
+  mx__phys_free(blk);
   park_status = status;
   park_done = 1;
   last_child = child, last_child_status = status;
@@ -522,12 +544,9 @@ void exec_unpark(int status) {
   }
 }
 
-/* a program ended: what was kept in its heap is gone with it (the slots
-   above those in use) */
-void exec_park_forget(void) {
-  for (int i = npark; i < MAX_PARK; i++)
-    parks[i].state = 0;
-}
+/* a program ended: nothing of it is kept here (each park's record is in
+   the parked program's heap, freed when it is in front again) */
+void exec_park_forget(void) {}
 
 /* the other takes all memory: the waiting one ends with it. Only one that
    waits alone: one above a service cannot give the service's memory */

@@ -104,7 +104,8 @@ int end_possible(void);
 /* its threads, semaphores, handlers, the units; then, after main.c's
    cleanup of the IOP, the kernel's state of it set back */
 int end_tables_known(void);
-int end_park(int self, int beside);
+int end_park(int self, int beside, void *rec);
+u32 end_rec_size(void);
 void end_unpark(void);
 void end_drop(void);
 u32 end_state_size(void);
@@ -114,7 +115,9 @@ void end_state_swap(void *copy);
 void end_unpark_beside(void);
 /* kproc.c: a process beside the one in front (step 2e-2) */
 struct vm_space;
-void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struct vm_space *space);
+void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struct vm_space *space,
+                      void *rec);
+u32 kproc_rec_size(void);
 /* vm.c's address spaces (mx OS plan, phase 3a) */
 struct vm_space *mx__vm_space_new(u32 size);
 void mx__vm_space_switch(struct vm_space *s);
