@@ -242,6 +242,16 @@ int exec_parked(void);
 int exec_park(int beside);
 int exec_park_done(void);
 volatile int *exec_park_done_flag(void);
+/* ptab.c: the table of processes (mx OS plan, step 4a) */
+struct mx_proc_info;
+void ptab_start(int proc, int parent, const char *path);
+void ptab_core(int proc, u32 lo, u32 hi);
+void ptab_state(int proc, int state);
+void ptab_service(int proc);
+void ptab_end(int proc, int status);
+int ptab_status(int proc, int *status);
+int ptab_parent(int proc);
+int ptab_list(struct mx_proc_info *p, int max);
 int exec_park_status(void);
 void exec_unpark(int status);
 int exec_park_drop(void);

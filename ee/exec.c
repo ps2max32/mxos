@@ -360,7 +360,10 @@ void exec_park_started(void) {
 
 /* ---- a service (kernel version 18): it stays beside each program in front -- */
 
-void exec_park_service_set(void) { park.service = 1; }
+void exec_park_service_set(void) {
+  park.service = 1;
+  ptab_service(park.proc);
+}
 /* the program in front was started by the service (none waits above it) */
 int exec_park_service(void) { return npark && park.service; }
 /* in the service's threads: the one beside is the caller */
@@ -411,44 +414,7 @@ int kproc_wait(int id, int *status, int nohang) {
   return -1;
 }
 
-/* <mx/proc.h>'s list (kernel version 13): the program in front and those
-   that wait for it or run beside it */
-static void proc_name(char *to, const char *path) {
-  u32 n = (u32)strlen(path), max = sizeof((struct mx_proc_info *)0)->name - 1;
-  if (n > max)
-    path += n - max, n = max; /* its end: the file's name */
-  memcpy(to, path, n);
-  to[n] = 0;
-}
-int kproc_list(struct mx_proc_info *p, int max) {
-  int n = 0;
-  int front = end_proc_front();
-  if (user_tid && front > 0) {
-    if (n < max) {
-      struct mx_proc_info *i = &p[n];
-      memset(i, 0, sizeof *i);
-      i->id = (u8)front, i->state = MX_PROC_FRONT;
-      if (core_moved)
-        i->core_lo = core_phys, i->core_hi = core_phys + (core_end - LOW);
-      proc_name(i->name, status_program());
-    }
-    n++;
-  }
-  for (int k = npark - 1; k >= 0; k--) {
-    const struct park_slot *q = &parks[k];
-    if (q->proc <= 0)
-      continue;
-    if (n < max) {
-      struct mx_proc_info *i = &p[n];
-      memset(i, 0, sizeof *i);
-      i->id = (u8)q->proc, i->state = q->beside ? MX_PROC_BESIDE : MX_PROC_WAITING;
-      i->core_lo = q->core_phys, i->core_hi = q->core_phys + (q->core_end - LOW);
-      proc_name(i->name, parked_program(k));
-    }
-    n++;
-  }
-  return n;
-}
+int kproc_list(struct mx_proc_info *p, int max) { return ptab_list(p, max); }
 int kproc_self(void) { return ksched_thread_proc(mx_bios_get_thread_id()); }
 int exec_park_done(void) { return park_done; }
 volatile int *exec_park_done_flag(void) { return &park_done; }
@@ -477,6 +443,7 @@ int exec_park(int beside) {
   q->core_pin = core_pin, q->core_pin_bytes = core_pin_bytes;
   core_pin = 0, core_pin_bytes = 0;
   q->proc = end_proc_front();
+  ptab_state(q->proc, beside ? MX_PROC_BESIDE : MX_PROC_WAITING);
   q->asid = mx__asid, q->core_off = mx__core_off, q->core_end = core_end;
   q->core_phys = core_phys, q->frames_hi = frames_hi, q->core_slots = core_slots;
   q->largs = largs;
@@ -536,6 +503,7 @@ void exec_unpark(int status) {
     end_unpark_beside();
   park.on = 0;
   int child = park.child, waiter = park.waiter, beside = park.beside;
+  ptab_state(park.proc, MX_PROC_FRONT);
   npark--; /* park is another slot from here (a service's, below it) */
   park_status = status;
   park_done = 1;
@@ -569,6 +537,7 @@ int exec_park_drop(void) {
   if (park.beside)
     kproc_side_end(); /* held: its threads end with the other's */
   end_drop();
+  ptab_end(park.proc, -1); /* it ends with the other */
   park.on = 0;
   park.state = 0;
   npark = 0;
@@ -935,6 +904,9 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   /* what is there before it: the rest is the program's at its end (end.c) */
   /* on the kernel's threads a process of its own (step 2d-3) */
   int proc = ksched_active() ? ksched_proc_new() : 0;
+  ptab_start(proc, npark ? park.proc : 0, path);
+  if (core_moved)
+    ptab_core(proc, core_phys, core_phys + (core_end - LOW));
   end_snapshot(proc);
   on_libmxk = 0;
   kirq_setup_args_clear(); /* SetupThread: not the block of the program before */

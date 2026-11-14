@@ -368,6 +368,7 @@ void mxlink_return(int status) {
   returned = 1;
   returns++;
   last_status = status;
+  ptab_end(end_proc_front(), status);
   /* a libmxk program from the resident mxlink: the command thread ends it,
      without the restart (end.c); this thread waits for that. Only one that
      showed the kernel its interrupt handlers (table version 8): an older
@@ -424,7 +425,7 @@ void mx__crash_kept(struct mx_crash *c) {
    host's reset of a program that hangs) and logged when the host starts its next program
    (exec.c). Not logged at once: the log's host copy goes through the SIF,
    which may be what is stuck. */
-#define HANG_LINES 48
+#define HANG_LINES 40
 static char hang_kept[HANG_LINES][112] KEPT = {{0}};
 static u32 hang_n KEPT = 0;
 void hang_note(const char *line) {
@@ -698,6 +699,7 @@ int kproc_kill(int id, int status) {
   returned = 1;
   returns++;
   last_status = (u32)status & 0xFF;
+  ptab_end(id, (int)last_status);
   /* kernel version 20: a service (the host link) ended it: the text screen
      after it, not the shell, until the next reset */
   if (exec_service_caller()) {
