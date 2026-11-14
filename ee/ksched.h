@@ -87,6 +87,7 @@ int ksched_thread_proc(int id);
 int ksched_sema_proc(int id);
 int ksched_set_sema_proc(int id, int proc);
 void ksched_proc_hold(int proc, int hold);
+int ksched_hold_self_unless(volatile int *done);
 int ksched_line_used(int line, int n);
 /* kproc.c: two processes side by side (step 2e-2) */
 void kproc_thread(int proc);

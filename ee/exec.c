@@ -451,6 +451,7 @@ int kproc_list(struct mx_proc_info *p, int max) {
 }
 int kproc_self(void) { return ksched_thread_proc(mx_bios_get_thread_id()); }
 int exec_park_done(void) { return park_done; }
+volatile int *exec_park_done_flag(void) { return &park_done; }
 int exec_park_status(void) { return park_status; }
 
 /* in the program's thread: 0, it waits now; -1, it cannot. beside (step
@@ -534,8 +535,8 @@ void exec_unpark(int status) {
   else
     end_unpark_beside();
   park.on = 0;
-  int child = park.child, waiter = park.waiter;
-  npark--;
+  int child = park.child, waiter = park.waiter, beside = park.beside;
+  npark--; /* park is another slot from here (a service's, below it) */
   park_status = status;
   park_done = 1;
   last_child = child, last_child_status = status;
@@ -546,8 +547,11 @@ void exec_unpark(int status) {
   }
   if (side)
     ksched_proc_hold(side, 0);
-  if (waiter)
+  if (waiter) {
+    if (!beside) /* its thread held itself (main.c, launch) */
+      ksched_proc_hold(ksched_thread_proc(waiter), 0);
     mx_bios_wakeup_thread(waiter);
+  }
 }
 
 /* a program ended: what was kept in its heap is gone with it (the slots

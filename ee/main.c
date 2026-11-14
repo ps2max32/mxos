@@ -624,8 +624,13 @@ static int launch(int argc, const char *args, u32 args_len, const char *swap, in
       exec_park_wait_clear(); /* its end wakes only whoever waits for it */
       return child && !exec_park_done() ? child : -1;
     }
-    while (!exec_park_done())
+    while (!exec_park_done()) {
+      /* not beside it: this program's memory is not mapped while the other
+         runs, so this thread must not run (exec_unpark releases it) */
+      if (!beside)
+        ksched_hold_self_unless(exec_park_done_flag());
       mx_bios_sleep_thread();
+    }
     return exec_park_status();
   }
   if (beside)
@@ -773,8 +778,19 @@ static int read_all(void) {
    with the ROM's drivers. */
 static int read_modules(void) {
   status_state(ST_BOOT, "IOP modules: reading");
+  /* the IOP as it was may not take anything any more (a program's module
+     left it so: the restart hung here with SIF1 busy for good): each call
+     of this try waits at most a second */
+  u32 timeouts = mx__sif_timeouts;
+  mx__sif_wait_limit = MX_EE_HZ;
   int kept = mx_sif_init() >= 0 && card_ready();
-  if (kept && read_all() == 0)
+  int ok = kept && read_all() == 0;
+  mx__sif_wait_limit = 0;
+  if (mx__sif_timeouts != timeouts) {
+    con_log(CON_GREY, "the IOP as it was did not answer: reset with the ROM's card drivers");
+    kept = 0, ok = 0;
+  }
+  if (ok)
     return 0;
   if (kept)
     con_log(CON_GREY, "the IOP as it was: reset with the ROM's card drivers");

@@ -326,12 +326,15 @@ static int k_refer_thread_status(int id, void *status) {
    process, the thread, the semaphore or -1 for a sleep, how many so far). */
 static int handler_now; /* the handler being run, 0: none */
 u32 ksched_dbg_wait[6];
-/* Inlined, and nothing called: k_sleep_thread and k_wait_sema run as syscall
-   handlers on the kernel's one syscall stack and switch threads from there
-   (switch_now), so they may keep nothing on that stack over the switch:
-   the next thread's syscalls write over it. As a call this made
-   k_wait_sema save ra and s0-s3 there, and a program that started another
-   and waited came back to address 1 (vm26_launch, k29_stay). */
+/* Inlined, and nothing called: k_sleep_thread and k_wait_sema keep no frame
+   (tools/wait-stack-check.sh). A frame there broke a program that started
+   another and waited (vm26_launch, k29_stay: back at address 1 or 2): the
+   waiter's thread is woken while the other has the core (any wake-up), runs
+   on a stack of the waiter's core, which maps the other's memory then, and
+   the frame it reads is not its own. The waiter is now held until the other
+   ends (ksched_hold_self_unless, main.c's launch, exec_unpark), so a frame
+   would no longer break it; the check stays for the threads that are not
+   held (the kernel's own). */
 static inline __attribute__((always_inline)) int handler_wait(struct kth *c, int sema) {
   if (!handler_now)
     return 0;
@@ -547,6 +550,23 @@ int ksched_set_proc(int id, int proc) {
 int ksched_thread_proc(int id) {
   struct kth *t = thread(id);
   return t ? t->proc : -1;
+}
+
+/* The running thread is not run again until its process is released by
+   ksched_proc_hold(proc, 0): a program that waits for the one it started
+   (not beside it) while that one has the core: its memory is not mapped
+   then, and any wake-up of it (a spurious one is enough) runs it on a stack
+   that reads another program's memory. 0: not held, the caller's condition
+   (read with interrupts off here) is true already. */
+int ksched_hold_self_unless(volatile int *done) {
+  int was = mx_di();
+  int held = 0;
+  if (!*done) {
+    cur()->held = 1;
+    held = 1;
+  }
+  mx_irq_restore(was);
+  return held;
 }
 
 /* a process's threads not run (hold), or run again; interrupts as they are */

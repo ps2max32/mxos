@@ -241,6 +241,7 @@ int mxlink_launch_beside(int argc, const char *args, u32 args_len, const char *s
 int exec_parked(void);
 int exec_park(int beside);
 int exec_park_done(void);
+volatile int *exec_park_done_flag(void);
 int exec_park_status(void);
 void exec_unpark(int status);
 int exec_park_drop(void);
