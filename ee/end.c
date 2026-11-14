@@ -379,6 +379,39 @@ void end_unpark(void) {
   nparked--;
 }
 
+/* A process beside that ended alone (step 4c), in the command thread: what
+   it made, by its tag (its threads, semaphores, handlers, ports, timers; the
+   file server's lock if one of its threads held it), and its entry here
+   out. Its files, sockets and IOP memory are not tagged yet. */
+void end_side_off(int proc) {
+  int h = mx__fio_owner();
+  if (h > 0 && ksched_thread_proc(h) == proc) {
+    fio_holder = h, fio_held = 1;
+    mx__fio_release(fio_gone);
+    fio_held = 0;
+  }
+  int self = mx_bios_get_thread_id();
+  for (int id = 1; id < NIDS; id++)
+    if (id != self && ksched_thread_proc(id) == proc) {
+      mx_bios_terminate_thread(id);
+      mx_bios_delete_thread(id);
+    }
+  ksched_proc_handlers_off(proc);
+  kmsg_proc_end(proc);
+  for (int id = 0; id < NIDS; id++)
+    if (ksched_sema_proc(id) == proc)
+      mx_bios_delete_sema(id);
+  end_kernel_clients();
+  mx__timer_reap(proc);
+  for (int k = 0; k < nparked; k++)
+    if (parked_at[k]->proc == proc) {
+      for (; k + 1 < nparked; k++)
+        parked_at[k] = parked_at[k + 1];
+      nparked--;
+      break;
+    }
+}
+
 /* Given up (the other could not have a run of its own and takes all
    memory): its threads and semaphores go with the other's end. */
 void end_drop(void) {

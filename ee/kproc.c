@@ -120,6 +120,7 @@ static int side_of(int proc) {
 
 /* the last one beside (0: none) */
 int kproc_side(void) { return nsides ? sides[nsides - 1]->proc : 0; }
+int kproc_is_side(int proc) { return side_of(proc) >= 0; }
 u32 kproc_switches(void) { return switches; }
 
 /* ksched_pick, interrupts off: the next thread is of proc */
@@ -192,6 +193,27 @@ void kproc_side_end(void) {
   ksched_proc_hold(d->proc, 1);
   switch_to(-1, 1);
   kvu0_load(&d->vu);
+  nsides--;
+  if (nsides)
+    tlb_core_keep(sides[nsides - 1]->keep_n, sides[nsides - 1]->keep_end);
+  else
+    tlb_core_keep(0, 0);
+  mx_irq_restore(was);
+}
+
+/* A process beside that ended alone (step 4c), in the command thread: its
+   threads held, the front's space and state live, and it out of the list;
+   the TLB entries kept are the top one's (those of one in the middle stay
+   kept until the ones above it end). */
+void kproc_side_remove(int proc) {
+  int i = side_of(proc);
+  if (i < 0)
+    return;
+  int was = mx_di();
+  ksched_proc_hold(proc, 1);
+  switch_to(-1, 1);
+  for (int k = i; k + 1 < nsides; k++)
+    sides[k] = sides[k + 1];
   nsides--;
   if (nsides)
     tlb_core_keep(sides[nsides - 1]->keep_n, sides[nsides - 1]->keep_end);

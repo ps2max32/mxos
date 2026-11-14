@@ -20,6 +20,7 @@
 #include <mx/kernel.h>
 #include <mx/sif.h>
 #include <mx/string.h>
+#include <mx/thread.h>
 #include <mx/timer.h>
 
 #include "ksched.h"
@@ -362,7 +363,34 @@ void exec_started(const char *path) {
 /* A program's way back (<mx/loader.h>: maxsdk's mx_exit calls it): runs in
    the program, so only this file's .data and a BIOS call. The restart's
    ExecPS2 drops the program's threads, semaphores and handlers. */
+/* step 4c: a process beside the one in front that ended (its mx_exit or a
+   crash in one of its threads): the command thread takes it away alone */
+static volatile int side_ending;
+int side_end_pending(void) { return side_ending; }
+void side_end_now(void) {
+  int proc = side_ending;
+  int service = exec_side_ended(proc);
+  int status = 0;
+  ptab_status(proc, &status);
+  con_log(status ? CON_RED : CON_GREY, "process %d beside%s ended, exit status %d; the one in front goes on",
+          proc, service > 0 ? " (the service)" : "", status);
+  side_ending = 0;
+}
+
 void mxlink_return(int status) {
+  {
+    int me = ksched_active() ? ksched_thread_proc(mx_bios_get_thread_id()) : 0;
+    if (me > 0 && me != end_proc_front() && kproc_is_side(me) &&
+        mx_bios_get_thread_id() != cmd_thread_id()) {
+      ptab_end(me, status);
+      while (side_ending) /* one at a time */
+        mx_sleep_us(1000);
+      side_ending = me;
+      cmd_wake();
+      for (;;)
+        mx_bios_sleep_thread();
+    }
+  }
   if (exec_in_shell())
     no_shell = 1;
   returned = 1;

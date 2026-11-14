@@ -666,6 +666,14 @@ static int remove_handler(int line, int n, int id) {
   mx_irq_restore(was);
   return r;
 }
+/* a process that ended beside the one in front (step 4c): its handlers
+   out (their causes and channels left as they are: others may use them) */
+void ksched_proc_handlers_off(int proc) {
+  for (int i = 1; i <= NHANDLERS; i++)
+    if (handler[i].fn && handler[i].proc == (u32)proc)
+      remove_handler(handler[i].line, handler[i].n, i);
+}
+
 /* a handler of any process on this INTC cause (line 0) or DMAC channel (1):
    end.c leaves it enabled at a program's end (step 2e-2: the one beside's,
    the kernel's) */

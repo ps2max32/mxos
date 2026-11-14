@@ -233,8 +233,12 @@ static int host_post(const u8 *p, u32 cmd) {
 static void cmd_thread(void *arg) {
   (void)arg;
   for (;;) {
-    while (!pkt_new && !launch_argc && !end_pending())
+    while (!pkt_new && !launch_argc && !end_pending() && !side_end_pending())
       mx_bios_sleep_thread();
+    if (side_end_pending()) {
+      side_end_now();
+      continue;
+    }
     if (end_pending()) {
       program_ended();
       continue;

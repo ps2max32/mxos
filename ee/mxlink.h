@@ -255,6 +255,13 @@ void ptab_end(int proc, int status);
 int ptab_status(int proc, int *status);
 int ptab_parent(int proc);
 int ptab_list(struct mx_proc_info *p, int max);
+/* step 4c: a process beside ends alone */
+int exec_side_ended(int proc);
+void end_side_off(int proc);
+void kproc_side_remove(int proc);
+int kproc_is_side(int proc);
+int side_end_pending(void);
+void side_end_now(void);
 int exec_park_status(void);
 void exec_unpark(int status);
 int exec_park_drop(void);

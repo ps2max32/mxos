@@ -308,10 +308,21 @@ static int kvm_init(const struct mx_vm_config *c) {
   return 0;
 }
 static void kvm_shutdown(void) {
-  if (vm_kept)
+  /* a process beside that ends (step 4c): its space goes in its end
+     (exec_side_ended), the front's VM stays */
+  int me = ksched_active() ? ksched_thread_proc(mx_bios_get_thread_id()) : 0;
+  if (me > 0 && me != end_proc_front() && kproc_is_side(me))
+    return;
+  if (vm_kept) {
     kvm_front_gone(); /* the VM goes on, the others' */
-  else
-    mx__vm_shutdown();
+    return;
+  }
+  /* the last with VM: its pinned core back first (its space was not the
+     first when the one that turned the VM on ended before it, step 4c) */
+  if (core_pin)
+    mx__vm_frames_give(core_pin, core_pin_bytes);
+  core_pin = 0, core_pin_bytes = 0, front_space = 0;
+  mx__vm_shutdown();
 }
 
 /* the program's core heap (maxsdk's src/vm/heap.c, the kernel's copy) */
@@ -542,6 +553,38 @@ void exec_unpark(int status) {
       ksched_proc_hold(ksched_thread_proc(waiter), 0);
     mx_bios_wakeup_thread(waiter);
   }
+}
+
+/* A process beside the one in front ended alone (step 4c), in the command
+   thread: its threads and what it made by its tag gone, its VM space and
+   pinned core back to the VM, its slot out. Its core (a run of physical
+   memory below the others' when not VM frames) stays unused until those
+   above it end. 0, or -1 when proc is not one beside. */
+int exec_side_ended(int proc) {
+  int j = -1;
+  for (int i = 0; i < npark; i++)
+    if (parks[i]->proc == proc && parks[i]->beside)
+      j = i;
+  if (j < 0)
+    return -1;
+  struct park_slot *q = parks[j];
+  struct vm_space *space = q->space;
+  void *pin = q->core_pin;
+  u32 pin_bytes = q->core_pin_bytes;
+  int service = q->service;
+  kproc_side_remove(proc);
+  end_side_off(proc);
+  for (int k = j; k + 1 < npark; k++)
+    parks[k] = parks[k + 1];
+  npark--;
+  /* q is in its memory: not read from here */
+  if (space) {
+    mx__vm_space_free(space);
+    vm_kept--;
+  }
+  if (pin)
+    mx__vm_frames_give(pin, pin_bytes);
+  return service;
 }
 
 /* a program ended: nothing of it is kept here (each park's record is in
