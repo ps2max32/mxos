@@ -377,6 +377,35 @@ void side_end_now(void) {
   side_ending = 0;
 }
 
+/* step 4d (proc_front): the command thread switches; the caller sleeps
+   until then (paused with the front when it is the front: back once it is in
+   front again) */
+static volatile int front_want, front_result;
+static int front_caller;
+int front_pending(void) { return front_want; }
+void front_now(void) {
+  front_result = exec_front_switch(front_want, last_path);
+  if (front_result == 0)
+    status_state(exec_in_shell() ? ST_MENU : ST_RUNNING, last_path);
+  front_want = 0;
+  if (front_caller)
+    mx_bios_wakeup_thread(front_caller);
+}
+int kproc_front(int id) {
+  if (id <= 0 || mx_bios_get_thread_id() == cmd_thread_id())
+    return -1;
+  if (id == end_proc_front())
+    return 0;
+  while (front_want) /* one at a time */
+    mx_sleep_us(1000);
+  front_caller = mx_bios_get_thread_id();
+  front_want = id;
+  cmd_wake();
+  while (front_want)
+    mx_bios_sleep_thread();
+  return front_result;
+}
+
 void mxlink_return(int status) {
   {
     int me = ksched_active() ? ksched_thread_proc(mx_bios_get_thread_id()) : 0;
@@ -590,12 +619,9 @@ int mxlink_crash(struct mx_crash *c) {
   return 1;
 }
 
-/* the paths of the programs that wait for one they started (step 2c) or
-   run beside it, by their level (exec_parked() - 1 the last) */
-static char parked_path[2][sizeof last_path];
-/* one's path (kproc_list) */
-const char *parked_program(int level) { return parked_path[level & 1]; }
-static char *parked_top(void) { return parked_path[(exec_parked() - 1) & 1]; }
+/* the path of the last program that waits for one it started (step 2c) or
+   runs beside it: in its record (exec.c, its own memory since step 4d) */
+static char *parked_top(void) { return exec_park_path(); }
 
 /* in a service's thread: the program in launch_args started in front by the
    command thread, waited for: its process, -1 if it did not start */

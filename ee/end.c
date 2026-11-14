@@ -77,7 +77,7 @@ struct parked {
 };
 /* each in the waiting program's own memory (exec_park's record, through
    MX_PHYS_WIN), mx OS plan step 4b */
-static struct parked *parked_at[2];
+static struct parked *parked_at[6];
 static struct parked parked_none; /* `parked` with none: never used for more than a read */
 static int nparked;
 u32 end_rec_size(void) { return (sizeof(struct parked) + 63) & ~63u; }
@@ -310,7 +310,7 @@ static void slot_set(const void *base, u32 i, int id) {
 int end_park(int self, int beside, void *rec) {
   if (!tables_known || !tables.intc_entry || !tables.dmac_entry ||
       !program_range(tables.intc_entry, 4) || !program_range(tables.dmac_entry, 4) ||
-      nparked == 2)
+      nparked == 6)
     return -1;
   memset(rec, 0, sizeof *parked_at[0]);
   parked_at[nparked] = rec;
@@ -410,6 +410,24 @@ void end_side_off(int proc) {
       nparked--;
       break;
     }
+}
+
+/* step 4d: process proc's entry (anywhere in the list) taken as end_unpark
+   or end_unpark_beside take the last one: moved to the end first */
+void end_unpark_proc(int proc, int beside) {
+  int k = 0;
+  while (k < nparked && parked_at[k]->proc != proc)
+    k++;
+  if (k == nparked)
+    return;
+  __typeof__(parked_at[0]) p = parked_at[k];
+  for (; k + 1 < nparked; k++)
+    parked_at[k] = parked_at[k + 1];
+  parked_at[nparked - 1] = p;
+  if (beside)
+    end_unpark_beside();
+  else
+    end_unpark();
 }
 
 /* Given up (the other could not have a run of its own and takes all

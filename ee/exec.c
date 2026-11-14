@@ -219,7 +219,7 @@ static int core_place(u32 end, u32 heap) {
    added again, and its call returns the other's exit status. */
 /* A stack of them (since 2026-11-12): a service at the bottom, and
    one above it that waits for or runs beside the program in front. */
-#define MAX_PARK 2
+#define MAX_PARK 6 /* records in the programs' own memory (4b): only pointers here */
 struct park_slot {
   int on, tid, shell, beside;
   int proc;   /* its process */
@@ -234,6 +234,9 @@ struct park_slot {
   void *core_pin;         /* its core, when frames of the VM's pool */
   u32 core_pin_bytes;
   void *blk; /* this record's block in its core heap (freed at exec_unpark) */
+  void *side_rec; /* its kproc.c part; with vu_kept its VU0 registers (step 4d) */
+  int vu_kept;
+  char path[256]; /* its path, the kernel's "Last" again when it is in front */
 };
 /* Each a record in the waiting program's own core heap (mx OS plan step
    4b): this slot, end.c's and kproc.c's part, and the copy of its kernel
@@ -428,6 +431,11 @@ int kproc_wait(int id, int *status, int nohang) {
       *status = last_child_status;
     return 1;
   }
+  /* one that ended while this one was not the one it went back to (step 4d:
+     it was brought in front, then the other again): the table knows */
+  int r = ptab_status(id, status);
+  if (r == 1 || (r == 0 && nohang))
+    return r;
   return -1;
 }
 
@@ -440,6 +448,8 @@ int exec_park_status(void) { return park_status; }
 /* in the program's thread: 0, it waits now; -1, it cannot. beside (step
    2e-2, kproc.c): its other threads go on beside the other program, its
    core's TLB entries kept. */
+char *exec_park_path(void) { return park.path; }
+
 int exec_park(int beside) {
   /* one without VM waits above another only beside: it crashed at once
      (its stack in the next one's core) and takes the restart's way; one
@@ -526,6 +536,8 @@ void exec_unpark(int status) {
       front_space = 0; /* the VM is its alone again */
   }
   core_pin = park.core_pin, core_pin_bytes = park.core_pin_bytes;
+  if (park.vu_kept) /* paused by another's mx_proc_front (step 4d) */
+    kproc_vu_load(park.side_rec);
   if (!park.beside)
     end_unpark();
   else
@@ -585,6 +597,88 @@ int exec_side_ended(int proc) {
   if (pin)
     mx__vm_frames_give(pin, pin_bytes);
   return service;
+}
+
+/* Step 4d, in the command thread (the front's space and kernel state live):
+   process proc (waiting or beside, not the service) in front; the one in
+   front paused, as if it waited for it: its record in its own heap, its
+   handlers out, all its threads suspended (end_park with the command thread
+   as self), on top of the list, so that it is in front again when proc
+   ends. 0, or -1. */
+int exec_front_switch(int proc, char *path) {
+  int j = -1;
+  for (int i = 0; i < npark; i++)
+    if (parks[i]->proc == proc && !parks[i]->service)
+      j = i;
+  if (j < 0 || !user_tid || !core_moved || !on_libmxk || !end_tables_known())
+    return -1;
+  /* the one in front waits */
+  u32 n_slot = (sizeof(struct park_slot) + 63) & ~63u, n_end = end_rec_size();
+  u32 n_side = kproc_rec_size(), n_state = end_state_size();
+  u8 *blk = mx__phys_alloc(n_slot + n_end + n_side + n_state, 64);
+  if (!blk)
+    return -1;
+  u8 *win = (u8 *)(uintptr_t)(MX_PHYS_WIN + mx_paddr_of(blk).v);
+  struct park_slot *q = (struct park_slot *)win;
+  memset(q, 0, sizeof *q);
+  q->blk = blk;
+  q->state = blk + n_slot + n_end + n_side;
+  if (end_park(mx_bios_get_thread_id(), 0, win + n_slot) < 0) {
+    mx__phys_free(blk);
+    return -1;
+  }
+  struct park_slot *t = parks[j];
+  for (int k = j; k + 1 < npark; k++)
+    parks[k] = parks[k + 1];
+  parks[npark - 1] = q;
+  q->tid = user_tid, q->shell = shell, q->beside = 0;
+  q->space = core_vm && mx_vm_active() ? mx__vm_space_now() : 0;
+  vm_kept += q->space != 0;
+  q->core_pin = core_pin, q->core_pin_bytes = core_pin_bytes;
+  q->proc = end_proc_front();
+  ptab_state(q->proc, MX_PROC_WAITING);
+  q->asid = mx__asid, q->core_off = mx__core_off, q->core_end = core_end;
+  q->core_phys = core_phys, q->frames_hi = frames_hi, q->core_slots = core_slots;
+  q->largs = largs;
+  end_state_save(q->state);
+  q->side_rec = win + n_slot + n_end;
+  kproc_vu_save(q->side_rec);
+  q->vu_kept = 1;
+  memcpy(q->path, path, sizeof q->path);
+  q->on = 1;
+  /* proc in front: as exec_unpark, without the end of a child */
+  if (t->beside)
+    kproc_side_front(proc);
+  mx__asid_set(t->asid);
+  mx__core_off = t->core_off;
+  int n = tlb_core_map(t->core_end, t->core_off);
+  if (n >= 0)
+    mx__vm_tlb_fix();
+  core_slots = n < 0 ? 0 : (u32)n;
+  if (n < 0) {
+    mx__core_off = 0;
+    mxlink_restart();
+  }
+  end_state_load(t->state);
+  mx__pad_forget();
+  user_tid = t->tid, shell = t->shell, on_libmxk = 1, core_moved = 1;
+  core_vm = t->space != 0;
+  core_end = t->core_end, core_phys = t->core_phys, frames_hi = t->frames_hi;
+  largs = t->largs;
+  front_space = 0;
+  if (t->space) {
+    mx__vm_space_switch(t->space);
+    front_space = t->space;
+    vm_kept--;
+  }
+  core_pin = t->core_pin, core_pin_bytes = t->core_pin_bytes;
+  if (t->vu_kept)
+    kproc_vu_load(t->side_rec);
+  end_unpark_proc(proc, t->beside);
+  ptab_state(proc, MX_PROC_FRONT);
+  memcpy(path, t->path, sizeof t->path);
+  mx__phys_free(t->blk); /* its heap is the live one again */
+  return 0;
 }
 
 /* a program ended: nothing of it is kept here (each park's record is in
@@ -749,6 +843,7 @@ static const struct mxk_services kernel = {
     .proc_spawn = kproc_spawn,
     .proc_wait = kproc_wait,
     .proc_kill = kproc_kill,
+    .proc_front = kproc_front,
     .sleep_us = mx_sleep_us,
     .proc_events = kmsg_events,
     .log_read = klog_read,

@@ -41,7 +41,7 @@ void kvu0_save(struct kvu0 *to);
 void kvu0_load(const struct kvu0 *from);
 
 /* those beside, a stack as exec.c's parks (a service, one above it) */
-#define MAX_SIDES 2
+#define MAX_SIDES 4
 struct side {
   int proc;
   u32 asid, core_off;
@@ -212,6 +212,32 @@ void kproc_side_remove(int proc) {
   int was = mx_di();
   ksched_proc_hold(proc, 1);
   switch_to(-1, 1);
+  for (int k = i; k + 1 < nsides; k++)
+    sides[k] = sides[k + 1];
+  nsides--;
+  if (nsides)
+    tlb_core_keep(sides[nsides - 1]->keep_n, sides[nsides - 1]->keep_end);
+  else
+    tlb_core_keep(0, 0);
+  mx_irq_restore(was);
+}
+
+/* step 4d: VU0's registers of a program paused in front into its record's
+   kproc.c part, and back (the record through MX_PHYS_WIN) */
+void kproc_vu_save(void *rec) { kvu0_save(&((struct side *)rec)->vu); }
+void kproc_vu_load(void *rec) { kvu0_load(&((struct side *)rec)->vu); }
+
+/* step 4d: a process beside comes in front (exec_front_switch, the command
+   thread): out of the list, its threads running in the front's space from
+   now; the front's state live (its own part is in its copy, put back by
+   exec.c with end_state_load). */
+void kproc_side_front(int proc) {
+  int i = side_of(proc);
+  if (i < 0)
+    return;
+  int was = mx_di();
+  switch_to(-1, 1);
+  kvu0_load(&sides[i]->vu); /* its VU0 registers live: it is the front's now */
   for (int k = i; k + 1 < nsides; k++)
     sides[k] = sides[k + 1];
   nsides--;
