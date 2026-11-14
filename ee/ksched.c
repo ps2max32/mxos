@@ -746,6 +746,8 @@ u32 ksched_dispatch(int line, u32 epc) {
         if (!handler[i].fn || handler[i].line != line || handler[i].n != n)
           continue;
         int sw = kproc_handler_enter(handler[i].proc);
+        if (sw < 0)
+          continue; /* its process is paused: its memory is not mapped */
         handler_proc = handler[i].proc;
         handler_now = i;
         int r = handler[i].fn(n, handler[i].arg, (void *)(uintptr_t)epc);

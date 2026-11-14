@@ -120,6 +120,7 @@ void exec_kill(void) {
    not on libmxk). Stale entries of an earlier one are gone: the TLB is the
    BIOS's again at each end (tlb_restore). */
 static u32 last_asid;
+static u32 asid_new(void);
 #define CORE_HEAP (256u << 10)
 #define MIN_FRAMES (4u << 20)
 #define MIB (1u << 20)
@@ -189,8 +190,7 @@ static int core_place(u32 end, u32 heap) {
       return -1;
     phys = top - run;
   }
-  last_asid = last_asid % 255 + 1;
-  mx__asid_set(last_asid);
+  mx__asid_set(asid_new());
   mx__core_off = phys - LOW;
   int n = tlb_core_map(va_end, mx__core_off);
   if (n >= 0)
@@ -244,6 +244,22 @@ struct park_slot {
 static struct park_slot *parks[MAX_PARK];
 static struct park_slot park_none; /* `park` with none waiting */
 static int npark;
+
+/* the next ASID, in turn, none that a parked program (waiting, beside, a
+   service) or the one in front still has: after 255 starts the turn came
+   round to a waiting one's, the new program's TLB entries were its, and
+   the kernel crashed (k46_spawnloop, round 254) */
+static u32 asid_new(void) {
+  for (int n = 0; n < 255; n++) {
+    last_asid = last_asid % 255 + 1;
+    int used = last_asid == mx__asid;
+    for (int i = 0; i < npark && !used; i++)
+      used = parks[i]->asid == last_asid;
+    if (!used)
+      break;
+  }
+  return last_asid;
+}
 /* the one the program in front was started by (parks[0] when none waits) */
 #define park (*(npark ? parks[npark - 1] : &park_none))
 /* the last one back in front (exec_unpark), for its waiting thread */
@@ -767,8 +783,7 @@ static void kernel_program(void *heap_lo, void *heap_hi, void *vm_lo, void *vm_h
     if (!vm_kept) /* else the frames are the VM's already, its core among them */
       mx__vm_frames(LOW, frames_hi);
   } else {
-    last_asid = last_asid % 255 + 1;
-    mx__asid_set(last_asid);
+    mx__asid_set(asid_new());
     mx__heap_range(heap_lo, heap_hi);
   }
   mx__vm_image_range(vm_lo, vm_hi);

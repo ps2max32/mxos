@@ -88,6 +88,10 @@ int ptab_status(int proc, int *status) {
     *status = e->status;
   return 1;
 }
+int ptab_waiting(int proc) {
+  struct ptab *e = find(proc);
+  return e && e->state == MX_PROC_WAITING;
+}
 int ptab_parent(int proc) {
   struct ptab *e = find(proc);
   return e ? e->parent : -1;

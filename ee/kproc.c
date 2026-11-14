@@ -137,6 +137,11 @@ void kproc_thread(int proc) {
    another has its own way back (with one way back for both, a side's thread
    whose own timer came in went on in the front's space, and the PS2 hung). */
 int kproc_handler_enter(int proc) {
+  /* a process that waits (paused, or for the one it started): not mapped,
+     its handler must not run (a libgl program's timer ran in the other's
+     memory and crashed it: mx OS plan step 4d) */
+  if (proc > 0 && ptab_waiting(proc))
+    return -1;
   if (!nsides)
     return 0;
   int want = side_of(proc);
