@@ -16,7 +16,7 @@
 
 struct ptab {
   u8 used, state; /* MX_PROC_*, 0: ended */
-  u8 service, pad;
+  u8 service, shell;
   int proc, parent, status;
   u32 seq; /* the order of starts: the oldest ended entry is used again first */
   u32 core_lo, core_hi;
@@ -71,10 +71,33 @@ void ptab_service(int proc) {
   if (e)
     e->service = 1;
 }
+/* kernel version 26: the process the kernel started as its shell */
+void ptab_shell(int proc) {
+  struct ptab *e = find(proc);
+  if (e)
+    e->shell = 1;
+}
 void ptab_end(int proc, int status) {
   struct ptab *e = find(proc);
   if (e && e->state)
     e->state = 0, e->status = status;
+}
+
+/* its file's name (without the path), "" for none: a notification's source */
+void ptab_name(int proc, char *to, u32 room) {
+  struct ptab *e = find(proc);
+  to[0] = 0;
+  if (!e || !room)
+    return;
+  const char *n = e->name;
+  for (const char *p = e->name; *p; p++)
+    if (*p == '/' || *p == ':')
+      n = p + 1;
+  u32 l = (u32)strlen(n);
+  if (l >= room)
+    l = room - 1;
+  memcpy(to, n, l);
+  to[l] = 0;
 }
 
 /* 1: proc ended, its status in *status; 0: it runs; -1: not known */
@@ -119,6 +142,7 @@ int ptab_list(struct mx_proc_info *p, int max) {
         struct mx_proc_info *i = &p[n];
         memset(i, 0, sizeof *i);
         i->id = (u8)e->proc, i->state = e->state;
+        i->flags = (u16)((e->shell ? MX_PROC_SHELL : 0) | (e->service ? MX_PROC_SERVICE : 0));
         i->core_lo = e->core_lo, i->core_hi = e->core_hi;
         memcpy(i->name, e->name, sizeof i->name);
       }

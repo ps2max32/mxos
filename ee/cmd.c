@@ -233,8 +233,13 @@ static int host_post(const u8 *p, u32 cmd) {
 static void cmd_thread(void *arg) {
   (void)arg;
   for (;;) {
-    while (!pkt_new && !launch_argc && !end_pending() && !side_end_pending() && !front_pending())
+    while (!pkt_new && !launch_argc && !end_pending() && !side_end_pending() && !front_pending() &&
+           !dev_pending())
       mx_bios_sleep_thread();
+    if (dev_pending()) {
+      dev_now(); /* a device came or went (kernel version 26) */
+      continue;
+    }
     if (front_pending()) {
       front_now();
       continue;
@@ -318,6 +323,11 @@ void cmd_launch(int argc, const char *args, u32 args_len) {
 }
 
 int cmd_thread_id(void) { return cmd_tid; }
+/* from an interrupt (dev.c's vblank): the command thread looks */
+void cmd_iwake(void) {
+  if (cmd_tid > 0)
+    mx_bios_iwakeup_thread(cmd_tid);
+}
 void cmd_wake(void) { mx_bios_wakeup_thread(cmd_tid); }
 
 int cmd_init(void) {

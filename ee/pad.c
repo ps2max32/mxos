@@ -21,6 +21,9 @@
 
 #include <mxpad.h>
 
+#include <mx/notify.h>
+#include <mx/proc.h>
+
 #include "mxlink.h"
 
 _Static_assert(PAD_PORTS == 2 + MXPAD_PADS, "PAD_PORTS: the SIO2 ports and the USB slots");
@@ -90,9 +93,14 @@ static int sio_state(int p) {
   return 0;
 }
 
+/* the SIO2 ports are open (a program's mx_pad_init until pads_close) */
+static int ports_open;
+void pad_ports_closed(void) { ports_open = 0; }
+
 /* <mx/kernel.h>'s pad_init: the ports open, a pad that was there held */
 int pad_init(void) {
   int r = mx__pad_init();
+  ports_open = 1;
   for (int p = 0; p < 2; p++)
     if (sio_was[p])
       sio_until[p] = mx_count() + SIO_OPEN_HOLD;
@@ -258,4 +266,79 @@ int pad_read(int port, struct mx_pad_state *s, int sticks) {
     s->buttons = swap_bits(s->buttons, MX_PAD_CROSS, MX_PAD_CIRCLE);
   s->buttons = home_filter(s->buttons);
   return r;
+}
+
+/* ---- notifications (kernel version 26) ----------------------------------
+   The command thread (dev.c, twice a second): a controller came or went, a
+   wireless one's battery runs low. USB and Bluetooth pads always; the SIO2
+   ports only while a program has them open (a pad there is not looked for
+   otherwise: closing them is not a pad that went). */
+static u8 usb_kind[MXPAD_PADS], usb_low[MXPAD_PADS], sio_known[2];
+static u32 pad_changes;
+
+static const char *pad_name(int kind) {
+  return kind == MXPAD_DS3   ? "DualShock 3"
+         : kind == MXPAD_DS4 ? "DualShock 4"
+         : kind == MXPAD_DS5 ? "DualSense"
+                             : "Controller";
+}
+
+/* its player: the program's port it is on, + 1 */
+static int player_of(int sio, int n) {
+  for (int port = 0; port < PAD_PORTS; port++) {
+    int s, m;
+    struct mxpad_record r;
+    if (port_source(port, &s, &m, &r) && (s != 0) == (sio != 0) && m == n)
+      return port + 1;
+  }
+  return 0;
+}
+
+static void tell(const char *title, const char *what, int player) {
+  char text[MX_NOTIFY_TEXT];
+  if (player)
+    mx_snprintf(text, sizeof text, "%s, player %d", what, player);
+  else
+    mx_snprintf(text, sizeof text, "%s", what);
+  knotify_add(MX_NOTIFY_PAD, 0, MX_NOTIFY_ACTION_PADS, "", title, text);
+}
+
+void pad_watch(void) {
+  int changed = 0;
+  char what[64];
+  for (int i = 0; usb_on && i < MXPAD_PADS; i++) {
+    struct mxpad_record r = usb_newest(i);
+    int k = r.kind;
+    if (k && !usb_kind[i]) {
+      mx_snprintf(what, sizeof what, "%s (%s)", pad_name(k), r.flags & MXPAD_CABLE ? "USB" : "Bluetooth");
+      tell("Controller connected", what, player_of(0, i));
+      changed = 1;
+    } else if (!k && usb_kind[i]) {
+      tell("Controller disconnected", pad_name(usb_kind[i]), 0);
+      changed = 1;
+    }
+    usb_kind[i] = (u8)k;
+    if (!k || r.battery == 255 || r.battery >= 4)
+      usb_low[i] = 0;
+    else if (r.battery <= 2 && !usb_low[i] && !(r.flags & MXPAD_CABLE)) {
+      usb_low[i] = 1;
+      mx_snprintf(what, sizeof what, "%s: battery at %d%%", pad_name(k), r.battery * 10);
+      knotify_add(MX_NOTIFY_PAD, 0, MX_NOTIFY_ACTION_PADS, "", "Battery low", what);
+      changed = 1;
+    }
+  }
+  for (int p = 0; ports_open && p < 2; p++) {
+    int there = sio_state(p) != 0;
+    if (there != sio_known[p]) {
+      mx_snprintf(what, sizeof what, "Controller port %d", p + 1);
+      tell(there ? "Controller connected" : "Controller disconnected", what,
+           there ? player_of(1, p) : 0);
+      sio_known[p] = (u8)there;
+      changed = 1;
+    }
+  }
+  if (changed) {
+    struct mx_event e = {MX_EVENT_PAD, 0, (s32)++pad_changes, 0};
+    kmsg_post_all(&e, sizeof e);
+  }
 }

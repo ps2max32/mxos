@@ -315,6 +315,27 @@ int kmsg_post(int proc, const void *data, u32 len) {
   return r;
 }
 
+/* An event to every process with an event port (kernel version 26: the
+   devices, the notifications), from the command thread: not to one that
+   waits or is paused (it reads the state when it is back), and not again
+   while one of the same type is still in its queue (a hint). */
+void kmsg_post_all(const void *data, u32 len) {
+  u32 type = *(const u32 *)data;
+  int was = mx_di();
+  for (int i = 0; i < NEVENTS; i++) {
+    int proc = evport[i].proc, port = evport[i].port;
+    if (!proc || ptab_waiting(proc))
+      continue;
+    int queued = 0;
+    for (int k = 0; k < MX_MSG_SLOTS && !queued; k++)
+      queued = slots[k].state == S_QUEUED && slots[k].post && slots[k].port == (u8)(port - 1) &&
+               *(const u32 *)slots[k].data == type;
+    if (!queued)
+      post_port(port, proc, data, len);
+  }
+  mx_irq_restore(was);
+}
+
 /* ---- IOP channels (kernel version 17) ------------------------------------- */
 
 int kmsg_iop_channel(u32 cid, int port) {

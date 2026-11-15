@@ -239,7 +239,8 @@ void end_cleanup(void) {
   /* their calls to the IOP ended, before the next call or semas_off */
   calls_left = mx__sif_calls_finish();
   handlers_off();
-  mx__vm_unhook();
+  if (!exec_vm_kept()) /* the VM goes on (one beside, the kernel's) */
+    mx__vm_unhook();
   home_unhook();
   /* its ports and messages, before its semaphores go (kmsg.c) */
   kmsg_proc_end(proc_now);

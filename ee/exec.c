@@ -94,6 +94,7 @@ int exec_resident(void) {
 
 /* The program ended without the restart (main.c): its thread is gone. */
 static void kvm_front_gone(void);
+void kvm_off(void);
 void exec_ended(void) {
   kvm_front_gone();
   exec_park_forget();
@@ -169,6 +170,13 @@ static u32 mem_top(void);
 /* phase 3a (below, exec_park): parked programs with VM, and the core of
    the one in front when it is frames of the VM's pool */
 static int vm_kept;
+/* mx OS plan 4e: the VM made at the kernel's boot (kvm_boot), the kernel's,
+   on between programs: every program's core is frames of its pool, its VM a
+   space of its own, and one without VM that takes all memory is refused.
+   Without it (PCSX2's recompiler) programs are placed as before. */
+static int vm_boot;
+static struct vm_space *boot_space;
+#define VM_KEPT (vm_kept || vm_boot)
 static void *core_pin;
 static u32 core_pin_bytes;
 
@@ -177,7 +185,7 @@ static int core_place(u32 end, u32 heap) {
   if (va_end > TOP)
     return -1;
   u32 phys;
-  if (vm_kept) {
+  if (VM_KEPT) {
     /* a program beside has VM: the core is frames of its pool (phase 3a) */
     void *p = mx__vm_frames_take_aligned(run, MIB);
     if (!p)
@@ -274,7 +282,7 @@ static int park_done, park_status;
    frames and swap file (kvm_init); its core is a run of those frames,
    pinned (core_place). Its end gives both back (kvm_front_gone). */
 static struct vm_space *front_space; /* the program in front's, while vm_kept */
-int exec_vm_kept(void) { return vm_kept; }
+int exec_vm_kept(void) { return VM_KEPT; }
 struct vm_space *exec_front_space(void) { return front_space; }
 static struct vm_space *parked_space(void) {
   for (int i = npark - 1; i >= 0; i--)
@@ -286,6 +294,8 @@ static struct vm_space *parked_space(void) {
    core back to the VM, the one below current */
 static void kvm_front_gone(void) {
   struct vm_space *s = parked_space();
+  if (!s)
+    s = boot_space; /* the kernel's (4e) */
   if (front_space && s) {
     mx__vm_space_switch(s);
     mx__vm_space_free(front_space);
@@ -296,20 +306,24 @@ static void kvm_front_gone(void) {
   core_pin = 0, core_pin_bytes = 0;
 }
 static int kvm_init(const struct mx_vm_config *c) {
-  if (!vm_kept)
+  if (!VM_KEPT)
     return mx_vm_init(c);
   if (front_space)
     return -1; /* on already */
+  /* 4e: only MXOS's swap file (swap.c attaches it when its device is
+     there); the one the program names is not used */
   /* with a swap file (its own or MXOS's) its VM is the size it asks for,
-     128 MiB if it does not say; without one, the first space's (the frames) */
-  struct vm_space *s = mx__vm_space_new(c->swap[0] ? (c->size ? c->size : 128u << 20) : c->size);
+     128 MiB if it does not say; without one, the first space's (the frames;
+     4e: the frames) */
+  struct vm_space *s =
+      mx__vm_space_new(vm_boot || !c->swap[0] ? c->size : c->size ? c->size : 128u << 20);
   if (!s)
     return -1;
   mx__vm_space_limit(s, c->frames); /* its frames: at most what it asks for */
   mx__vm_space_switch(s);
   front_space = s;
   /* its swap file, if the VM has none yet (the one that turned it on) */
-  if (mx__vm_swap_open(c->swap) < 0) {
+  if (!vm_boot && mx__vm_swap_open(c->swap) < 0) {
     kvm_front_gone();
     return -1;
   }
@@ -333,7 +347,7 @@ static void kvm_shutdown(void) {
   int me = ksched_active() ? ksched_thread_proc(mx_bios_get_thread_id()) : 0;
   if (me > 0 && me != end_proc_front() && kproc_is_side(me))
     return;
-  if (vm_kept) {
+  if (VM_KEPT) {
     kvm_front_gone(); /* the VM goes on, the others' */
     return;
   }
@@ -343,6 +357,41 @@ static void kvm_shutdown(void) {
     mx__vm_frames_give(core_pin, core_pin_bytes);
   core_pin = 0, core_pin_bytes = 0, front_space = 0;
   mx__vm_shutdown();
+}
+
+/* mx OS plan 4e: the VM at the kernel's boot, after the IOP is up (its
+   swap file; the IOP modules were read to the programs' memory, free now).
+   The frames are all memory from 1 MiB but the tables' 64 KiB at the top.
+   0, or -1: programs are placed as before. */
+int mx__vm_boot(u32 phys_lo, u32 phys_hi, int prio);
+void mx__heap_range(void *lo, void *hi);
+extern const char *mx__loader_swap;
+int kvm_boot(void) {
+  if (!exec_resident())
+    return -1; /* mxkernel-high: in the programs' memory */
+  u32 top = MX_MAIN_BYTES & ~(MIB - 1), tables = 64u << 10;
+  mx__heap_range((void *)(uintptr_t)(top - tables), (void *)(uintptr_t)top);
+  if (mx__vm_boot(LOW, top - tables, 1) < 0)
+    return -1;
+  vm_boot = 1;
+  boot_space = mx__vm_space_now();
+  return 0; /* its swap file: swap.c */
+}
+int kvm_on(void) { return vm_boot; }
+/* the kernel replaced, or restarted: the BIOS's TLB and handlers back (the
+   restart's start makes the VM again) */
+void kvm_off(void) {
+  if (!vm_boot)
+    return;
+  mx__vm_shutdown();
+  mx__vm_swap_close();
+  vm_boot = 0, boot_space = 0;
+}
+/* the kernel's restart (main.c): the BIOS's TLB and handlers back before its
+   data is set back (the swap file: the boot's IOP cleanup closes it) */
+void kvm_restart(void) {
+  if (vm_boot)
+    mx__vm_shutdown();
 }
 
 /* the program's core heap (maxsdk's src/vm/heap.c, the kernel's copy) */
@@ -567,7 +616,7 @@ void exec_unpark(int status) {
     mx__vm_space_switch(park.space);
     front_space = park.space;
     vm_kept--;
-    if (!vm_kept)
+    if (!VM_KEPT)
       front_space = 0; /* the VM is its alone again */
   }
   core_pin = park.core_pin, core_pin_bytes = park.core_pin_bytes;
@@ -792,7 +841,7 @@ static void exception_setup(const char **note) {
   program_note = note;
   mx_exception_init();
   /* a program beside has VM (phase 3a): its handlers in front again */
-  if (vm_kept)
+  if (VM_KEPT)
     mx__vm_handlers_again();
   mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
 }
@@ -801,13 +850,13 @@ static void kernel_program(void *heap_lo, void *heap_hi, void *vm_lo, void *vm_h
   on_libmxk = 1;
   /* the swap file's size (plan 3c), before the program's mx_vm_init */
   u32 swap_bytes = 0;
-  if (!vm_kept && kswap_path(&swap_bytes))
+  if (!VM_KEPT && kswap_path(&swap_bytes))
     mx__vm_swap_size(swap_bytes);
   if (core_moved) {
     /* its ASID and core run since the load: the core heap ends with the
        run, the frames are below it */
     mx__heap_range(heap_lo, (void *)(uintptr_t)core_end);
-    if (!vm_kept) /* else the frames are the VM's already, its core among them */
+    if (!VM_KEPT) /* else the frames are the VM's already, its core among them */
       mx__vm_frames(LOW, frames_hi);
   } else {
     mx__asid_set(asid_new());
@@ -887,6 +936,14 @@ static const struct mxk_services kernel = {
     .proc_kill = kproc_kill,
     .proc_front = kproc_front,
     .proc_shell = kproc_shell,
+    .dev_list = kdev_list,
+    .dev_gen = kdev_gen,
+    .dev_eject = kdev_eject,
+    .swap_set = kswap_set,
+    .swap_info = kswap_info,
+    .notify = knotify,
+    .notify_read = knotify_read,
+    .notify_seq = knotify_seq,
     .sleep_us = mx_sleep_us,
     .proc_events = kmsg_events,
     .log_read = klog_read,
@@ -1021,6 +1078,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
       con_log(CON_YELLOW, "  a kernel: first the restart, without the services");
       mxlink_takeover(argc, args, args_len);
     }
+    kvm_off(); /* the kernel's VM (4e): nothing else runs, its frames are free */
     return exec_replace(fd, path, &eh, ph);
   }
   /* mx OS plan 2h-2: the kernel runs MXOS programs only (libmxk, kernel
@@ -1043,6 +1101,9 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   int note_v9 = core_off_at != 0;
   if (core_off_at && !vm && !heap)
     core_off_at = 0; /* without VM: all memory, unless it asks for a core heap */
+  /* 4e: all memory is the VM's; such a program is not started */
+  if (vm_boot && !core_off_at)
+    return fail(fd, path, "takes all memory (no VM and no MX_CORE_HEAP): not under this kernel");
   if (core_off_at) {
     u32 end = LOW;
     for (u32 i = 0; i < eh.phnum; i++) {
@@ -1051,8 +1112,11 @@ int exec_elf(int argc, const char *args, u32 args_len) {
           p->vaddr + p->memsz > end)
         end = p->vaddr + p->memsz;
     }
-    if ((u32)(uintptr_t)core_off_at + 4 > end || core_place(end, vm ? CORE_HEAP : heap) < 0)
+    if ((u32)(uintptr_t)core_off_at + 4 > end || core_place(end, vm ? CORE_HEAP : heap) < 0) {
       core_off_at = 0;
+      if (vm_boot)
+        return fail(fd, path, "no memory for its core");
+    }
   }
   /* a program waiting for this one (step 2c) is given up when this one
      cannot have a run of its own: it takes all memory */
@@ -1105,6 +1169,8 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   /* on the kernel's threads a process of its own (step 2d-3) */
   int proc = ksched_active() ? ksched_proc_new() : 0;
   ptab_start(proc, npark ? park.proc : 0, path);
+  if (shell)
+    ptab_shell(proc);
   if (core_moved)
     ptab_core(proc, core_phys, core_phys + (core_end - LOW));
   end_snapshot(proc);
@@ -1132,7 +1198,8 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   /* the swap file: its launch's, else MXOS's (mc0:/MXOS/SWAP.CFG, plan 3c) */
   u32 swap_bytes = 0;
   const char *mxos_swap = kswap_path(&swap_bytes);
-  largs.swap = program_swap = mx__loader_swap = next_swap ? next_swap : mxos_swap;
+  /* 4e: only MXOS's */
+  largs.swap = program_swap = mx__loader_swap = next_swap && !vm_boot ? next_swap : mxos_swap;
   next_swap = 0;
   largs.kernel_magic = self_end <= LOW ? MX_KERNEL_MAGIC : 0;
   largs.kernel = &kernel;

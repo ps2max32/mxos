@@ -84,10 +84,12 @@ static u32 crash_return KEPT = 0;
 #ifndef MODULE_DIR
 #define MODULE_DIR "mc0:/MXOS/"
 #endif
-#define SHELL_PATH MODULE_DIR "MXSHELL.ELF"
+/* the shell's path without a SHELL.CFG (shell_path) */
+#define SHELL_DEFAULT MODULE_DIR "MXSHELL.ELF"
+static const char *shell_path(void);
 #define MODULE_MEM ((u8 *)0x01000000)
 enum {
-  M_CHIME, M_MXNET = 4, M_MXIO = 14, M_MXSOCK = 15, M_USBD = 16, M_MXPAD = 17
+  M_CHIME, M_MXNET = 4, M_MXIO = 14, M_MXSOCK = 15, M_USBD = 16, M_MXPAD = 17, M_MXATA = 22
 };
 static const char *const module_names[] = {
     "chime", "poweroff",
@@ -102,9 +104,13 @@ static const char *const module_names[] = {
     "mxio", "mxsock",
     /* not on an older card: no USB pads (mxpad, on usbd: libs/maxsdk/docs/pad-bt-plan.md) */
     "usbd", "mxpad",
+    /* the storage drivers (kernel version 26: the kernel's, programs load
+       none): bdm and its FAT file system, then USB drives, MX4SIO and the
+       HDD; mxio watches them come and go (dev.c) */
+    "bdm", "bdmfs_fatfs", "usbmass_bd", "mx4sio_bd", "mxata",
 };
 #define OPTIONAL(i) ((i) >= M_MXIO)
-_Static_assert(sizeof module_names / sizeof module_names[0] == M_MXPAD + 1, "M_* and module_names");
+_Static_assert(sizeof module_names / sizeof module_names[0] == M_MXATA + 1, "M_* and module_names");
 #define NMODULES (sizeof module_names / sizeof module_names[0])
 static struct {
   const u8 *start;
@@ -302,6 +308,7 @@ static void restart(void) {
      host now would end in the kernel's "DMAC(5) Handler does not exist" and
      its break. cmd_init turns it on again. */
   kirq_sif0_off();
+  kvm_restart(); /* the kernel's VM (4e): made again by the start */
   /* the first start's ExecPS2: the BIOS's vectors again (until main turns
      the kernel's on again, an interrupt must not find the kernel's entry
      with its state half reset); the kernel's own restart keeps its vectors
@@ -973,9 +980,13 @@ static void sound_off(void) {
     return;
   }
   int fd = module_open(M_CHIME), size = fd < 0 ? -1 : mx_fio_lseek(fd, 0, MX_FIO_SEEK_END);
-  if (size > 0 && mx_fio_lseek(fd, 0, MX_FIO_SEEK_SET) == 0 &&
-      mx_fio_read(fd, MODULE_MEM, (u32)size) == size)
-    mx_iop_load_module_buffer(MODULE_MEM, (u32)size, "-q", 3, &chime);
+  /* the programs' memory is the VM's from the boot (4e): pinned frames */
+  u8 *buf = size > 0 && kvm_on() ? mx__vm_frames_take_aligned((u32)size, 64) : MODULE_MEM;
+  if (size > 0 && buf && mx_fio_lseek(fd, 0, MX_FIO_SEEK_SET) == 0 &&
+      mx_fio_read(fd, buf, (u32)size) == size)
+    mx_iop_load_module_buffer(buf, (u32)size, "-q", 3, &chime);
+  if (buf && buf != MODULE_MEM)
+    mx__vm_frames_give(buf, (u32)size);
   if (fd >= 0)
     mx_fio_close(fd);
 }
@@ -1017,6 +1028,7 @@ static void iop_cleanup(void) {
 static u32 pad_closes; /* pads_close's, since the boot */
 u32 pads_closed(void) { return pad_closes; }
 void pads_close(void) {
+  pad_ports_closed();
   pad_closes++;
   pad_rumble_off();
   if (mx_sif_bind_tries(&pad_rpc, PAD_SID, 2) == 0 && pad_rpc.server) {
@@ -1079,6 +1091,11 @@ reset:
   for (u32 i = M_CHIME + 1; i < NMODULES; i++) {
     if (!modules[i].size)
       continue;
+    /* MX4SIO shares slot 2 with a memory card and keeps looking for its SD
+       card there, so mcman no longer finds one: off until a setting turns
+       it on (mx OS plan 4e) */
+    if (!strcmp(module_names[i], "mx4sio_bd"))
+      continue;
     int stack = i == M_MXNET;
     if (load(i, stack ? if_conf : 0, stack ? if_conf_len : 0) < 0) {
       if (i >= M_USBD)
@@ -1106,7 +1123,7 @@ static void stopped(void) {
 static int shell_there(void) {
   if (no_shell || !exec_resident() || !card_ready())
     return 0;
-  int fd = mx_fio_open(SHELL_PATH, MX_FIO_RDONLY);
+  int fd = mx_fio_open(shell_path(), MX_FIO_RDONLY);
   if (fd < 0)
     return 0;
   mx_fio_close(fd);
@@ -1154,6 +1171,36 @@ static int read_words(const char *path, char *to, u32 max, u32 *len) {
   return words;
 }
 
+/* mx OS plan 4e: the shell is a role of the card's configuration, not a
+   path of the kernel's: mc0:/MXOS/SHELL.CFG (on PCSX2 host:shell.txt) names
+   its path; without the file MXSHELL.ELF in the kernel's directory. Read
+   once, when the card is there. */
+#ifdef MXLINK_EMU
+#define SHELL_CFG "host:shell.txt"
+#else
+#define SHELL_CFG MODULE_DIR "SHELL.CFG"
+#endif
+static char shell_cfg[64];
+static int shell_read;
+static const char *shell_path(void) {
+  if (!shell_read) {
+#ifndef MXLINK_EMU
+    if (!card_ready())
+      return SHELL_DEFAULT; /* read when the card is there */
+#endif
+    shell_read = 1;
+    char w[96];
+    u32 len;
+    int n = read_words(SHELL_CFG, w, sizeof w, &len);
+    u32 l = n >= 1 ? strlen(w) : 0;
+    if (l && l < sizeof shell_cfg) {
+      memcpy(shell_cfg, w, l + 1);
+      con_log(CON_GREY, "shell: %s", shell_cfg);
+    }
+  }
+  return shell_cfg[0] ? shell_cfg : SHELL_DEFAULT;
+}
+
 /* mx OS plan 3c: the one swap file of MXOS programs, mc0:/MXOS/SWAP.CFG (on
    PCSX2 host:swap.txt): its path and, optionally, its size in MiB (64 by
    default). A program without a swap file of its launch's gets it (in place
@@ -1191,6 +1238,26 @@ const char *kswap_path(u32 *bytes) {
     *bytes = swap_mib << 20;
   return swap_path[0] ? swap_path : 0;
 }
+/* mx_swap_set (swap.c, kernel version 26): the setting written ("" none) */
+int kswap_path_set(const char *path, u32 mib) {
+  char line[96];
+  u32 n = (u32)strlen(path);
+  if (n >= sizeof swap_path)
+    return -1;
+  int len = n ? mx_snprintf(line, sizeof line, "%s %u\n", path, mib) : 0;
+  int fd = mx_fio_open(SWAP_CFG, MX_FIO_WRONLY | MX_FIO_CREAT | MX_FIO_TRUNC);
+  if (fd < 0)
+    return -1;
+  int w = len ? mx_fio_write(fd, line, (u32)len) : 0;
+  mx_fio_close(fd);
+  if (w != len)
+    return -1;
+  memcpy(swap_path, path, n + 1);
+  swap_mib = mib;
+  swap_read = 1;
+  con_log(CON_GREY, "swap: %s, %u MiB", n ? swap_path : "none", swap_mib);
+  return 0;
+}
 
 /* the service started at the boot (kernel version 18): mc0:/MXOS/SERVICES.CFG
    (on PCSX2 host:services.txt), a path and its arguments; it calls
@@ -1224,18 +1291,20 @@ static int emu_argc;
 static u32 default_args(char *to, u32 max, int *argc) {
 #ifdef MXLINK_EMU
   if (emu_len <= max && emu_argc) {
-    if (!strcmp(emu_args, SHELL_PATH))
+    if (!strcmp(emu_args, shell_path()))
       exec_shell_next(); /* as the shell, as on the PS2 */
     memcpy(to, emu_args, emu_len);
     *argc = emu_argc;
     return emu_len;
   }
 #else
-  if (shell_there() && sizeof SHELL_PATH <= max) {
-    memcpy(to, SHELL_PATH, sizeof SHELL_PATH);
+  const char *sh = shell_path();
+  u32 sn = (u32)strlen(sh) + 1;
+  if (shell_there() && sn <= max) {
+    memcpy(to, sh, sn);
     exec_shell_next();
     *argc = 1;
-    return sizeof SHELL_PATH;
+    return sn;
   }
 #endif
   *argc = 0;
@@ -1281,6 +1350,12 @@ static void emu_main(void) {
     stopped();
   }
   iop_last = mx_iop_last_module(); /* iop_kept: the IOP as PCSX2 started it */
+  /* mx OS plan 4e: the VM at the boot, as main's (not with PCSX2's
+     recompiler, which raises no TLB misses) */
+  if (kvm_boot() < 0)
+    mx_printf("mxkernel: no VM at the boot: programs placed as before\n");
+  dev_start(); /* no mxio on PCSX2's IOP: no devices watched */
+  kswap_boot();
   /* started by the command thread, as on the PS2: the end without a
      restart, and programs that start others (launch, launch_beside) */
   if (cmd_init() < 0) {
@@ -1297,7 +1372,7 @@ static void emu_main(void) {
   }
   /* the shell's path (make emu MODULE_DIR=host:): started as the shell, as
      on the PS2 (the home button brings it in front) */
-  if (!strcmp(args, SHELL_PATH))
+  if (!strcmp(args, shell_path()))
     exec_shell_next();
   cmd_launch(words, args, len);
   mx_bios_exit_delete_thread();
@@ -1368,6 +1443,12 @@ int main(int argc, char **argv) {
     stopped();
   }
   pad_usb_start();
+  /* mx OS plan 4e: the VM, the kernel's from its boot; the devices
+     watched; the swap file attached when its device is there */
+  if (kvm_boot() < 0)
+    con_log(CON_YELLOW, "no VM at the boot: programs placed as before");
+  dev_start();
+  kswap_boot();
   /* the tty is up (mxfast): the debug output to ps2client too */
   mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
   if (cmd_init() < 0) {
@@ -1408,8 +1489,8 @@ static void after_program(void) {
   service_try = 0;
   /* the shell crashed, also before its first line (in its start): the text
      screen until the next reset, not the shell again and again */
-  if (came_back && crash_return == returns && !strcmp(last_path, SHELL_PATH) && !no_shell) {
-    con_log(CON_RED, "the shell %s crashed: not started again until a reset", SHELL_PATH);
+  if (came_back && crash_return == returns && !strcmp(last_path, shell_path()) && !no_shell) {
+    con_log(CON_RED, "the shell %s crashed: not started again until a reset", shell_path());
     no_shell = 1;
   }
   con_log(CON_GREEN, "mx kernel %s ready", MXLINK_VERSION);
@@ -1428,8 +1509,8 @@ static void after_program(void) {
   } else if (shell_there()) {
     /* it is told what came back: argv[1] the program, argv[2] its status */
     static char args[256];
-    u32 n = sizeof SHELL_PATH;
-    memcpy(args, SHELL_PATH, n);
+    u32 n = (u32)strlen(shell_path()) + 1;
+    memcpy(args, shell_path(), n);
     int m = 0;
     if (came_back && n + strlen(last_path) + 16 < sizeof args) {
       memcpy(args + n, last_path, strlen(last_path) + 1);

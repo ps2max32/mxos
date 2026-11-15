@@ -130,6 +130,7 @@ struct vm_space *mx__vm_space_now(void);
 void mx__vm_space_free(struct vm_space *s);
 void mx__vm_space_limit(struct vm_space *s, u32 bytes);
 int mx__vm_swap_open(const char *cfg_swap);
+int mx__vm_has_swap(void);
 int mx__vm_writer(u32 clean, int ids[3]);
 void mx__vm_shutdown(void);
 void mx__vm_swap_close(void);
@@ -140,6 +141,42 @@ const char *kswap_path(u32 *bytes);
 void *mx__vm_frames_take_aligned(u32 bytes, u32 align);
 void mx__vm_frames_give(void *p, u32 bytes);
 int exec_vm_kept(void);
+/* mx OS plan 4e: the VM made at the kernel's boot */
+int kvm_boot(void);
+int kvm_on(void);
+void kvm_off(void);
+void kvm_restart(void);
+/* kernel version 26: devices and notifications (dev.c), the swap file
+   (swap.c) */
+struct mx_dev_info;
+struct mx_notify;
+struct mx_swap_info;
+void dev_start(void);
+int dev_pending(void);
+void dev_now(void);
+int dev_present(const char *name);
+int kdev_list(struct mx_dev_info *out, int max);
+u32 kdev_gen(void);
+int kdev_eject(const char *name);
+int knotify_add(u32 kind, int urgent, u32 action, const char *source, const char *title,
+                const char *text);
+void knotify_resolve(int id);
+int knotify(u32 kind, int urgent, const char *title, const char *text);
+int knotify_read(u32 after, struct mx_notify *out, int max);
+u32 knotify_seq(void);
+void kswap_boot(void);
+void kswap_device(const char *name, int came);
+int kswap_on(const char *name);
+int kswap_set(const char *path, u32 mib);
+int kswap_info(struct mx_swap_info *s);
+int kswap_path_set(const char *path, u32 mib);
+void mx__vm_swap_gone(void);
+int mx__vm_swap_detach(void);
+void kmsg_post_all(const void *data, u32 len);
+void ptab_name(int proc, char *to, u32 room);
+void cmd_iwake(void);
+void pad_watch(void);
+void pad_ports_closed(void);
 struct vm_space *exec_front_space(void);
 void kproc_side_end(void);
 int kproc_side(void);
@@ -164,7 +201,7 @@ int exec_elf(int argc, const char *args, u32 args_len);
 void cmd_launch(int argc, const char *args, u32 args_len);
 /* 1 while a program runs */
 int exec_running(void);
-/* Is the program running the shell (mc0:/MXOS/MXSHELL.ELF)? */
+/* Is the program running the shell (the kernel's shell_path())? */
 int exec_in_shell(void);
 /* The next exec_elf starts the shell. */
 void exec_shell_next(void);
@@ -256,6 +293,7 @@ void ptab_start(int proc, int parent, const char *path);
 void ptab_core(int proc, u32 lo, u32 hi);
 void ptab_state(int proc, int state);
 void ptab_service(int proc);
+void ptab_shell(int proc);
 void ptab_end(int proc, int status);
 int ptab_status(int proc, int *status);
 int ptab_parent(int proc);
