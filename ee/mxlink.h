@@ -174,6 +174,7 @@ int kswap_host(const char *spec);
 void kswap_host_end(void);
 void mx__vm_swap_gone(void);
 int mx__vm_swap_detach(void);
+int mx__vm_swap_drain(void);
 void kmsg_post_all(const void *data, u32 len);
 void ptab_name(int proc, char *to, u32 room);
 void cmd_iwake(void);

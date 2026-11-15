@@ -214,8 +214,15 @@ int kswap_host(const char *spec) {
 void kswap_host_end(void) {
   if (host_run) {
     host_run = 0;
-    if (mx__vm_swap_detach() < 0)
-      con_log(CON_RED, "swap: %s still holds pages", host_path);
+    /* the pages of the processes that stay (the service's) that went out
+       into it: back in frames, as the file goes with the run */
+    if (mx__vm_swap_drain() < 0)
+      con_log(CON_RED, "swap: no frames to take %s's pages back", host_path);
+    if (mx__vm_swap_detach() < 0) {
+      /* never left attached: its host side ends with the run */
+      con_log(CON_RED, "swap: %s still holds pages: they are lost", host_path);
+      mx__vm_swap_gone();
+    }
   }
   if (mx__vm_has_swap())
     return;
