@@ -177,6 +177,7 @@ void ptab_name(int proc, char *to, u32 room);
 void cmd_iwake(void);
 void pad_watch(void);
 void pad_ports_closed(void);
+void pad_watch_quiet(void);
 struct vm_space *exec_front_space(void);
 void kproc_side_end(void);
 int kproc_side(void);

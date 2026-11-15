@@ -556,6 +556,7 @@ int exec_park(int beside) {
   }
   parks[npark] = q;
   q->tid = user_tid, q->shell = shell, q->beside = beside;
+  pad_watch_quiet();
   q->pad_closes = pads_closed();
   /* its VM stays: not saved or set back with the rest (end.c) */
   q->space = core_vm && mx_vm_active() ? mx__vm_space_now() : 0;
@@ -607,6 +608,7 @@ void exec_unpark(int status) {
   end_state_load(park.state);
   if (park.pad_closes != pads_closed())
     mx__pad_forget(); /* its ports were closed: its next mx_pad_init opens them */
+  pad_watch_quiet();
   user_tid = park.tid, shell = park.shell, on_libmxk = 1, core_moved = 1;
   core_vm = park.space != 0;
   core_end = park.core_end, core_phys = park.core_phys, frames_hi = park.frames_hi;
@@ -766,6 +768,7 @@ int exec_front_switch(int proc, char *path) {
   if (t->vu_kept)
     kproc_vu_load(t->side_rec);
   home_video_again(); /* its video mode, which the other may have changed */
+  pad_watch_quiet();
   end_unpark_proc(proc, t->beside);
   ptab_state(proc, MX_PROC_FRONT);
   memcpy(path, t->path, sizeof t->path);

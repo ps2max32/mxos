@@ -95,12 +95,17 @@ static int sio_state(int p) {
 
 /* the SIO2 ports are open (a program's mx_pad_init until pads_close) */
 static int ports_open;
-void pad_ports_closed(void) { ports_open = 0; }
+/* checks (twice a second) in which the SIO2 ports' state is taken as it is,
+   not told: after a switch between processes or the ports opened or
+   closed, a port reads as empty for a moment (pad_watch) */
+static int sio_quiet;
+void pad_watch_quiet(void) { sio_quiet = 6; }
+void pad_ports_closed(void) { ports_open = 0, sio_quiet = 6; }
 
 /* <mx/kernel.h>'s pad_init: the ports open, a pad that was there held */
 int pad_init(void) {
   int r = mx__pad_init();
-  ports_open = 1;
+  ports_open = 1, sio_quiet = 6;
   for (int p = 0; p < 2; p++)
     if (sio_was[p])
       sio_until[p] = mx_count() + SIO_OPEN_HOLD;
@@ -273,7 +278,7 @@ int pad_read(int port, struct mx_pad_state *s, int sticks) {
    wireless one's battery runs low. USB and Bluetooth pads always; the SIO2
    ports only while a program has them open (a pad there is not looked for
    otherwise: closing them is not a pad that went). */
-static u8 usb_kind[MXPAD_PADS], usb_low[MXPAD_PADS], sio_known[2];
+static u8 usb_kind[MXPAD_PADS], usb_low[MXPAD_PADS], sio_known[2], sio_seen[2];
 static u32 pad_changes;
 
 static const char *pad_name(int kind) {
@@ -327,9 +332,19 @@ void pad_watch(void) {
       changed = 1;
     }
   }
+  if (sio_quiet)
+    sio_quiet--;
   for (int p = 0; ports_open && p < 2; p++) {
     int there = sio_state(p) != 0;
-    if (there != sio_known[p]) {
+    /* a change counts when two checks in a row see it, and not right after
+       a switch or the ports opened (sio_quiet) */
+    int steady = there == sio_seen[p];
+    sio_seen[p] = (u8)there;
+    if (sio_quiet) {
+      sio_known[p] = (u8)there;
+      continue;
+    }
+    if (there != sio_known[p] && steady) {
       mx_snprintf(what, sizeof what, "Controller port %d", p + 1);
       tell(there ? "Controller connected" : "Controller disconnected", what,
            there ? player_of(1, p) : 0);
