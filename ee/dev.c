@@ -37,7 +37,8 @@ static u32 next_slot;
 static u64 ticks;
 static u32 tick_last;
 
-static u32 seconds(void) { return (u32)(ticks / MX_EE_HZ); }
+/* seconds since the boot (the vblank's count; settings.c too) */
+u32 kseconds(void) { return (u32)(ticks / MX_EE_HZ); }
 
 static void copy_text(char *to, const char *from, u32 max) {
   u32 n = 0;
@@ -62,7 +63,7 @@ int knotify_add(u32 kind, int urgent, u32 action, const char *source, const char
   n.id = ++notify_ids, n.seq = ++notify_seq_now;
   u32 slot = next_slot++ % NNOTIFY;
   mx_irq_restore(was);
-  n.time = seconds();
+  n.time = kseconds();
   n.kind = (u8)kind, n.urgent = urgent ? 1 : 0, n.action = (u8)action;
   copy_text(n.source, source, sizeof n.source);
   copy_text(n.title, title, sizeof n.title);
@@ -206,6 +207,7 @@ static void size_text(char *to, u32 room, u64 bytes) {
 void dev_now(void) {
   dev_wake = 0;
   pad_watch();
+  settings_tick();
   if (!dev_on)
     return;
   volatile struct mxio_devs *d = devs();

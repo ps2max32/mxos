@@ -178,6 +178,18 @@ void cmd_iwake(void);
 void pad_watch(void);
 void pad_ports_closed(void);
 void pad_watch_quiet(void);
+u32 kseconds(void);
+/* kernel version 27: the settings store (settings.c) */
+struct mx_setting;
+void settings_load(const char *kernel_dir);
+int settings_kept(void);
+void settings_tick(void);
+int ksetting_get(const char *key, char *value, u32 size);
+int ksetting_set(const char *key, const char *value);
+int ksetting_set_shell(const char *key, const char *value);
+int ksetting_list(u32 after, struct mx_setting *out, int max);
+u32 ksetting_seq(void);
+int ksetting_on(const char *key);
 struct vm_space *exec_front_space(void);
 void kproc_side_end(void);
 int kproc_side(void);

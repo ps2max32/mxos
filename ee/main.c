@@ -3,8 +3,9 @@
    command thread; the status screen meanwhile.
 
    As ps2link, mxlink starts twice: the first time (booted from a memory
-   card, or started by ps2link or another loader) it reads IPCONFIG.DAT
-   next to its ELF with the IOP as the loader left it, keeps it (KEPT) and
+   card, or started by ps2link or another loader) it reads the settings
+   (settings.c: the network's address among them) with the IOP as the
+   loader left it, keeps them and
    starts itself again by ExecPS2, which
    resets the EE kernel: the loader's threads and interrupt handlers are
    gone. A reset command from the host (mxlink_restart) does the same
@@ -25,6 +26,8 @@
 #include <mx/timer.h>
 
 #include "ksched.h"
+#include <mx/setting.h>
+
 #include "mxlink.h"
 
 /* What survives ExecPS2: .bss is cleared and .data set back (hook.S), so a
@@ -84,7 +87,7 @@ static u32 crash_return KEPT = 0;
 #ifndef MODULE_DIR
 #define MODULE_DIR "mc0:/MXOS/"
 #endif
-/* the shell's path without a SHELL.CFG (shell_path) */
+/* the shell's path without the setting shell.path (shell_path) */
 #define SHELL_DEFAULT MODULE_DIR "MXSHELL.ELF"
 static const char *shell_path(void);
 #define MODULE_MEM ((u8 *)0x01000000)
@@ -220,24 +223,20 @@ static void parse_conf(char *buf) {
   }
 }
 
-/* IPCONFIG.DAT next to the ELF mxlink was booted from */
+/* the network's address from the settings (net.ip, net.mask, net.gw;
+   settings.c imports IPCONFIG.DAT once), the defaults without them */
 static void read_conf(void) {
-  char path[300], buf[CONF_MAX];
-  u32 dir = 0;
-  for (u32 i = 0; boot_path[i]; i++)
-    if (boot_path[i] == '/' || boot_path[i] == '\\' || boot_path[i] == ':')
-      dir = i + 1;
-  memcpy(path, boot_path, dir);
-  strcpy(path + dir, "IPCONFIG.DAT");
-  int n = -1;
-  if (dir) {
-    int fd = mx_fio_open(path, MX_FIO_RDONLY);
-    if (fd >= 0) {
-      n = mx_fio_read(fd, buf, sizeof buf - 1);
-      mx_fio_close(fd);
-    }
+  char buf[CONF_MAX];
+  u32 n = 0;
+  static const char *const keys[3] = {"net.ip", "net.mask", "net.gw"};
+  for (int k = 0; k < 3; k++) {
+    int l = ksetting_get(keys[k], buf + n, sizeof buf - n - 1);
+    if (l <= 0)
+      break;
+    n += (u32)l;
+    buf[n++] = ' ';
   }
-  buf[n > 0 ? n : 0] = 0;
+  buf[n] = 0;
   parse_conf(buf);
 }
 
@@ -1093,8 +1092,8 @@ reset:
       continue;
     /* MX4SIO shares slot 2 with a memory card and keeps looking for its SD
        card there, so mcman no longer finds one: off until a setting turns
-       it on (mx OS plan 4e) */
-    if (!strcmp(module_names[i], "mx4sio_bd"))
+       it on (mx OS plan 4e): storage.mx4sio */
+    if (!strcmp(module_names[i], "mx4sio_bd") && !ksetting_on("storage.mx4sio"))
       continue;
     int stack = i == M_MXNET;
     if (load(i, stack ? if_conf : 0, stack ? if_conf_len : 0) < 0) {
@@ -1148,6 +1147,7 @@ static void screen(void) {
              crash.epc, crash.badvaddr, crash.ra);
 }
 
+#ifdef MXLINK_EMU
 /* a file of words (a path and its arguments): its words one after the
    other, each with its 0, in to; their number (0: none, or no file) */
 static int read_words(const char *path, char *to, u32 max, u32 *len) {
@@ -1170,104 +1170,48 @@ static int read_words(const char *path, char *to, u32 max, u32 *len) {
   *len = l;
   return words;
 }
+#endif
 
-/* mx OS plan 4e: the shell is a role of the card's configuration, not a
-   path of the kernel's: mc0:/MXOS/SHELL.CFG (on PCSX2 host:shell.txt) names
-   its path; without the file MXSHELL.ELF in the kernel's directory. Read
-   once, when the card is there. */
-#ifdef MXLINK_EMU
-#define SHELL_CFG "host:shell.txt"
-#else
-#define SHELL_CFG MODULE_DIR "SHELL.CFG"
-#endif
-static char shell_cfg[64];
-static int shell_read;
+/* mx OS plan 4e: the shell is a role of the settings, not a path of the
+   kernel's: shell.path (settings.c imports SHELL.CFG once); without it
+   MXSHELL.ELF in the kernel's directory */
+static char shell_cfg[MX_SETTING_VALUE];
 static const char *shell_path(void) {
-  if (!shell_read) {
-#ifndef MXLINK_EMU
-    if (!card_ready())
-      return SHELL_DEFAULT; /* read when the card is there */
-#endif
-    shell_read = 1;
-    char w[96];
-    u32 len;
-    int n = read_words(SHELL_CFG, w, sizeof w, &len);
-    u32 l = n >= 1 ? strlen(w) : 0;
-    if (l && l < sizeof shell_cfg) {
-      memcpy(shell_cfg, w, l + 1);
-      con_log(CON_GREY, "shell: %s", shell_cfg);
-    }
-  }
-  return shell_cfg[0] ? shell_cfg : SHELL_DEFAULT;
+  if (ksetting_get("shell.path", shell_cfg, sizeof shell_cfg) <= 0)
+    return SHELL_DEFAULT;
+  return shell_cfg;
 }
 
-/* mx OS plan 3c: the one swap file of MXOS programs, mc0:/MXOS/SWAP.CFG (on
-   PCSX2 host:swap.txt): its path and, optionally, its size in MiB (64 by
-   default). A program without a swap file of its launch's gets it (in place
-   of the one it asks for); none without the file. Read once. */
-#ifdef MXLINK_EMU
-#define SWAP_CFG "host:swap.txt"
-#else
-#define SWAP_CFG MODULE_DIR "SWAP.CFG"
-#endif
-static char swap_path[64];
-static u32 swap_mib = 64;
-static int swap_read;
+/* mx OS plan 3c: the one swap file of MXOS programs: swap.path and
+   swap.size (MiB, 64 by default) in the settings (settings.c imports
+   SWAP.CFG once). A program without a swap file of its launch's gets it (in
+   place of the one it asks for); none without the setting. */
+static char swap_path[MX_SETTING_VALUE];
 const char *kswap_path(u32 *bytes) {
-  if (!swap_read) {
-#ifndef MXLINK_EMU
-    if (!card_ready())
-      return 0; /* again at the next program */
-#endif
-    swap_read = 1;
-    char w[96];
-    u32 len;
-    int n = read_words(SWAP_CFG, w, sizeof w, &len);
-    u32 l = n >= 1 ? strlen(w) : 0;
-    if (l && l < sizeof swap_path) {
-      memcpy(swap_path, w, l + 1);
-      u32 mib = 0;
-      for (const char *p = w + l + 1; n >= 2 && *p >= '0' && *p <= '9'; p++)
-        mib = mib * 10 + (u32)(*p - '0');
-      if (mib)
-        swap_mib = mib;
-      con_log(CON_GREY, "swap: %s, %u MiB", swap_path, swap_mib);
-    }
-  }
+  char v[16];
+  u32 mib = 0;
+  if (ksetting_get("swap.size", v, sizeof v) > 0)
+    for (const char *p = v; *p >= '0' && *p <= '9'; p++)
+      mib = mib * 10 + (u32)(*p - '0');
   if (bytes)
-    *bytes = swap_mib << 20;
-  return swap_path[0] ? swap_path : 0;
+    *bytes = (mib ? mib : 64) << 20;
+  return ksetting_get("swap.path", swap_path, sizeof swap_path) > 0 ? swap_path : 0;
 }
 /* mx_swap_set (swap.c, kernel version 26): the setting written ("" none) */
 int kswap_path_set(const char *path, u32 mib) {
-  char line[96];
-  u32 n = (u32)strlen(path);
-  if (n >= sizeof swap_path)
+  char v[16];
+  mx_snprintf(v, sizeof v, "%u", mib);
+  if (ksetting_set("swap.path", path) < 0 || ksetting_set("swap.size", *path ? v : "") < 0)
     return -1;
-  int len = n ? mx_snprintf(line, sizeof line, "%s %u\n", path, mib) : 0;
-  int fd = mx_fio_open(SWAP_CFG, MX_FIO_WRONLY | MX_FIO_CREAT | MX_FIO_TRUNC);
-  if (fd < 0)
-    return -1;
-  int w = len ? mx_fio_write(fd, line, (u32)len) : 0;
-  mx_fio_close(fd);
-  if (w != len)
-    return -1;
-  memcpy(swap_path, path, n + 1);
-  swap_mib = mib;
-  swap_read = 1;
-  con_log(CON_GREY, "swap: %s, %u MiB", n ? swap_path : "none", swap_mib);
+  con_log(CON_GREY, "swap: %s, %u MiB", *path ? path : "none", mib);
   return 0;
 }
 
-/* the service started at the boot (kernel version 18): mc0:/MXOS/SERVICES.CFG
-   (on PCSX2 host:services.txt), a path and its arguments; it calls
-   mx_proc_service, and the program in front that comes next starts */
-#ifdef MXLINK_EMU
-#define SERVICES_PATH "host:services.txt"
-#else
-#define SERVICES_PATH MODULE_DIR "SERVICES.CFG"
-#endif
-static char service_args[256];
+/* the service started at the boot (kernel version 18): the setting
+   service (settings.c imports SERVICES.CFG once), a path and its arguments
+   between spaces; it calls mx_proc_service, and the program in front that
+   comes next starts */
+static char service_args[MX_SETTING_VALUE + 1];
 static u32 service_len;
 static int service_argc = -1; /* -1: not read yet */
 static int service_there(void) {
@@ -1275,9 +1219,22 @@ static int service_there(void) {
     service_argc = 0;
 #ifndef MXLINK_EMU
     if (!exec_resident() || !card_ready())
-      return 0;
+      return 0; /* its program is on the card */
 #endif
-    service_argc = read_words(SERVICES_PATH, service_args, sizeof service_args, &service_len);
+    char v[MX_SETTING_VALUE];
+    int n = ksetting_get("service", v, sizeof v);
+    u32 l = 0;
+    for (int i = 0; i < n;) {
+      while (i < n && v[i] <= ' ')
+        i++;
+      if (i == n)
+        break;
+      while (i < n && v[i] > ' ')
+        service_args[l++] = v[i++];
+      service_args[l++] = 0;
+      service_argc++;
+    }
+    service_len = l;
   }
   return service_argc > 0;
 }
@@ -1350,6 +1307,7 @@ static void emu_main(void) {
     stopped();
   }
   iop_last = mx_iop_last_module(); /* iop_kept: the IOP as PCSX2 started it */
+  settings_load(""); /* host:settings.dat, a test run's host:*.txt over it */
   /* mx OS plan 4e: the VM at the boot, as main's (not with PCSX2's
      recompiler, which raises no TLB misses) */
   if (kvm_boot() < 0)
@@ -1428,6 +1386,9 @@ int main(int argc, char **argv) {
       n = 0;
     memcpy(boot_path, n ? argv[0] : "", n);
     boot_path[n] = 0;
+    /* the settings (kernel version 27) through the loader's IOP, which
+       reads the card */
+    settings_load(MODULE_DIR);
     read_conf();
     KT(0xffff00, 0);
     restart();
