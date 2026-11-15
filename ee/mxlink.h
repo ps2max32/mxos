@@ -170,6 +170,8 @@ int kswap_on(const char *name);
 int kswap_set(const char *path, u32 mib);
 int kswap_info(struct mx_swap_info *s);
 int kswap_path_set(const char *path, u32 mib);
+int kswap_host(const char *spec);
+void kswap_host_end(void);
 void mx__vm_swap_gone(void);
 int mx__vm_swap_detach(void);
 void kmsg_post_all(const void *data, u32 len);

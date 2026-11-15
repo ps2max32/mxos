@@ -725,6 +725,9 @@ static int launch(int argc, const char *args, u32 args_len, const char *swap, in
     if (beside != 2 || exec_running())
       return -1;
     no_shell = 1; /* kernel version 20: after it the text screen, as a host's */
+    /* a host's run with a swap file on host: (mxlink's app: host:mxswap.txt) */
+    if (!strncmp(launch_swap, "host:", 5))
+      kswap_host(launch_swap);
     return service_start(argc);
   }
   /* a program with its core at a run of its own and without VM waits for
@@ -1537,6 +1540,7 @@ void program_ended(void) {
             threads_left, semas_left, calls_left & 0xFF, calls_left >> 8);
   if (exec_park_service()) {
     /* a service beside: it stays, and is told (kernel version 18) */
+    kswap_host_end(); /* MXOS's swap file again after a host's run on its own */
     exec_front_ended((int)last_status);
     after_program();
     mx_debug_flush();

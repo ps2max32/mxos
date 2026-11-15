@@ -168,3 +168,70 @@ int kswap_info(struct mx_swap_info *s) {
   memcpy(s->device, device, sizeof s->device);
   return 0;
 }
+
+/* ---- a host's run on its own swap file (host:) ----------------------------
+   A program the host link (the service) starts in front may bring a swap
+   file on host: ("host:<path> [MiB]", mxlink's app from host:mxswap.txt):
+   for that run it is the VM's swap file in place of MXOS's (the shell is
+   ended for a host's run, so MXOS's holds little; if it holds pages, it
+   stays). At the run's end MXOS's comes back. No notifications: the host's. */
+static int host_run;      /* the host's file attached for the run in front */
+static char host_path[64];
+
+int kswap_host(const char *spec) {
+  if (!spec || strncmp(spec, "host:", 5) || !kvm_on())
+    return -1;
+  u32 n = 0, mib = 0;
+  while (spec[n] && spec[n] != ' ' && n + 1 < sizeof host_path)
+    host_path[n] = spec[n], n++;
+  host_path[n] = 0;
+  for (const char *p = spec + n; *p; p++)
+    if (*p >= '0' && *p <= '9')
+      mib = mib * 10 + (u32)(*p - '0');
+  if (!mib)
+    mib = 128;
+  if (state == MX_SWAP_ATTACHED && mx__vm_swap_detach() < 0) {
+    con_log(CON_YELLOW, "swap: MXOS's file holds pages: the run keeps it, not %s", host_path);
+    return -1;
+  }
+  if (state == MX_SWAP_ATTACHED)
+    state = MX_SWAP_WAITING;
+  mx__vm_swap_size(mib << 20);
+  extern const char *mx__loader_swap;
+  mx__loader_swap = host_path;
+  if (mx__vm_swap_open(host_path) < 0 || !mx__vm_has_swap()) {
+    con_log(CON_RED, "swap: %s could not be opened: the run has no swap file", host_path);
+    mx__loader_swap = 0;
+    kswap_host_end();
+    return -1;
+  }
+  host_run = 1;
+  con_log(CON_GREY, "swap: %s, %u MiB, for the host's run", host_path, mib);
+  return 0;
+}
+
+/* the run in front ended (main.c): MXOS's file again, where its device is */
+void kswap_host_end(void) {
+  if (host_run) {
+    host_run = 0;
+    if (mx__vm_swap_detach() < 0)
+      con_log(CON_RED, "swap: %s still holds pages", host_path);
+  }
+  if (mx__vm_has_swap())
+    return;
+  u32 bytes = 0;
+  const char *path = kswap_path(&bytes);
+  if (!path || !path[0])
+    return;
+  device_of(path, device, sizeof device);
+  if (state != MX_SWAP_FAILED)
+    state = MX_SWAP_WAITING;
+  if (!strncmp(device, "host:", 5) || dev_present(device)) {
+    /* quietly: it was attached before the run (its notification stands) */
+    mx__vm_swap_size(bytes);
+    extern const char *mx__loader_swap;
+    mx__loader_swap = path;
+    if (mx__vm_swap_open(path) == 0 && mx__vm_has_swap())
+      state = MX_SWAP_ATTACHED;
+  }
+}
