@@ -233,6 +233,7 @@ void kvideo_board_offset(int code, int *dx, int *dy) {
 
 int kvideo_crtc_set(const struct mx_crtc *c) {
   struct mx_crtc_regs r;
+  home_crtc_seen(c); /* the process's, set again at a switch (step 4d) */
   if (!known) {
     int code = bios_code(c);
     if (!code)

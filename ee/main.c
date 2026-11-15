@@ -20,6 +20,7 @@
 #include <mx/kernel.h>
 #include <mx/sif.h>
 #include <mx/string.h>
+#include <mx/proc.h>
 #include <mx/thread.h>
 #include <mx/timer.h>
 
@@ -379,31 +380,94 @@ void side_end_now(void) {
 
 /* step 4d (proc_front): the command thread switches; the caller sleeps
    until then (paused with the front when it is the front: back once it is in
-   front again) */
-static volatile int front_want, front_result;
-static int front_caller;
+   front again). Each request has its number; after each switch every
+   waiting caller is woken and looks whether its own is done (one woken
+   while its process was paused, or whose wake-up was taken by a later
+   request, slept on: the home button's game never came back). */
+#define FRONT_WAITERS 8
+static volatile int front_want;
+static int front_kill;              /* a kill's status + 1 (kproc_front_kill) */
+static int front_home;              /* the home button's process (kproc_front_home) */
+static volatile u32 front_seq, front_done; /* requests given, done */
+static int front_res[FRONT_WAITERS];       /* by request number */
+static int front_tid[FRONT_WAITERS];       /* the callers waiting */
 int front_pending(void) { return front_want; }
 void front_now(void) {
-  front_result = exec_front_switch(front_want, last_path);
-  if (front_result == 0)
+  int id = front_want;
+  int r = exec_front_switch(id, last_path);
+  if (r == 0)
     status_state(exec_in_shell() ? ST_MENU : ST_RUNNING, last_path);
+  /* a kill of a paused one: in front now, it ends as by mx_proc_kill (the
+     caller, paused by the switch, is in front again after its end) */
+  if (r == 0 && front_kill)
+    r = kproc_kill(id, front_kill - 1);
+  /* the home button: the shell told once it is in front (before, it ran
+     beside and its mx_proc_front found the game still in front) */
+  if (r == 0 && front_home) {
+    home_hold(); /* the shell's buttons: none until the home button is let go */
+    struct mx_event e = {MX_EVENT_HOME, front_home, 0, 0};
+    kmsg_post(id, &e, sizeof e);
+  }
+  front_kill = 0, front_home = 0;
+  front_res[front_seq % FRONT_WAITERS] = r;
+  front_done = front_seq;
   front_want = 0;
-  if (front_caller)
-    mx_bios_wakeup_thread(front_caller);
+  for (int i = 0; i < FRONT_WAITERS; i++)
+    if (front_tid[i])
+      mx_bios_wakeup_thread(front_tid[i]);
+}
+static int front_request(int id, int kill, int home) {
+  int me = mx_bios_get_thread_id(), slot = -1;
+  if (id <= 0 || me == cmd_thread_id())
+    return -1;
+  for (;;) { /* one at a time, and a place to wait */
+    int was = mx_di();
+    for (int i = 0; slot < 0 && i < FRONT_WAITERS; i++)
+      if (!front_tid[i])
+        slot = i;
+    if (!front_want && slot >= 0) {
+      front_tid[slot] = me;
+      front_kill = kill, front_home = home;
+      u32 my = ++front_seq;
+      front_want = id;
+      mx_irq_restore(was);
+      cmd_wake();
+      while ((s32)(front_done - my) < 0)
+        mx_bios_sleep_thread();
+      int r = front_res[my % FRONT_WAITERS];
+      front_tid[slot] = 0;
+      return r;
+    }
+    slot = -1;
+    mx_irq_restore(was);
+    mx_sleep_us(1000);
+  }
 }
 int kproc_front(int id) {
-  if (id <= 0 || mx_bios_get_thread_id() == cmd_thread_id())
-    return -1;
-  if (id == end_proc_front())
+  if (id > 0 && id == end_proc_front())
     return 0;
-  while (front_want) /* one at a time */
-    mx_sleep_us(1000);
-  front_caller = mx_bios_get_thread_id();
-  front_want = id;
-  cmd_wake();
-  while (front_want)
-    mx_bios_sleep_thread();
-  return front_result;
+  return front_request(id, 0, 0);
+}
+/* <mx/kernel.h>'s proc_shell (version 25): is the caller the shell (in
+   front, or beside the one in front) */
+int kproc_shell(void) {
+  int me = ksched_active() ? ksched_thread_proc(mx_bios_get_thread_id()) : 0;
+  if (me <= 0)
+    return 0;
+  return me == end_proc_front() ? exec_in_shell() : exec_shell_parked() == me;
+}
+/* step 4d: the home button in process from (home.c, in its thread): the
+   shell in front, told by an event (MX_EVENT_HOME) */
+int kproc_front_home(int shell, int from) {
+  return from > 0 ? front_request(shell, 0, from) : -1;
+}
+/* step 4d: mx_proc_kill of a process that waits or is paused: in front
+   first (the command thread), then ended there */
+int kproc_front_kill(int id, int status) {
+  if (id <= 0 || id == ksched_thread_proc(mx_bios_get_thread_id()) || !exec_proc_parked(id) ||
+      !ptab_waiting(id))
+    return -1;
+  return front_request(id, (status & 0xFF) + 1, 0);
 }
 
 void mxlink_return(int status) {
@@ -746,6 +810,10 @@ static int shell_stopped;
 static s32 quiet_end KEPT = 0;
 
 int kproc_kill(int id, int status) {
+  /* one that waits or is paused (step 4d): in front first */
+  if (id > 0 && id != end_proc_front() && exec_proc_parked(id) &&
+      mx_bios_get_thread_id() != cmd_thread_id())
+    return kproc_front_kill(id, status);
   if (id <= 0 || id != end_proc_front() || id == ksched_thread_proc(mx_bios_get_thread_id()) ||
       !exec_running() || !exec_on_libmxk() || !exec_resident() || !end_possible() ||
       !end_tables_known() || ending)
@@ -946,7 +1014,10 @@ static void iop_cleanup(void) {
 
 /* an open port goes on writing the pad's state to EE memory; the USB and
    Bluetooth pads' motors stop */
+static u32 pad_closes; /* pads_close's, since the boot */
+u32 pads_closed(void) { return pad_closes; }
 void pads_close(void) {
+  pad_closes++;
   pad_rumble_off();
   if (mx_sif_bind_tries(&pad_rpc, PAD_SID, 2) == 0 && pad_rpc.server) {
     for (int port = 0; port < 2; port++) {
@@ -1153,6 +1224,8 @@ static int emu_argc;
 static u32 default_args(char *to, u32 max, int *argc) {
 #ifdef MXLINK_EMU
   if (emu_len <= max && emu_argc) {
+    if (!strcmp(emu_args, SHELL_PATH))
+      exec_shell_next(); /* as the shell, as on the PS2 */
     memcpy(to, emu_args, emu_len);
     *argc = emu_argc;
     return emu_len;
@@ -1222,6 +1295,10 @@ static void emu_main(void) {
     cmd_launch(service_argc, service_args, service_len);
     mx_bios_exit_delete_thread();
   }
+  /* the shell's path (make emu MODULE_DIR=host:): started as the shell, as
+     on the PS2 (the home button brings it in front) */
+  if (!strcmp(args, SHELL_PATH))
+    exec_shell_next();
   cmd_launch(words, args, len);
   mx_bios_exit_delete_thread();
 }

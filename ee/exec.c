@@ -222,6 +222,7 @@ static int core_place(u32 end, u32 heap) {
 #define MAX_PARK 6 /* records in the programs' own memory (4b): only pointers here */
 struct park_slot {
   int on, tid, shell, beside;
+  u32 pad_closes; /* pads_closed() when it stopped: its ports still open if the same */
   int proc;   /* its process */
   int waiter; /* a thread waiting for its end or its start (0: none) */
   int child;  /* the process of the program it started, once it runs; -1:
@@ -352,6 +353,21 @@ static u32 mem_top(void) {
   return npark ? park.core_phys : MX_MAIN_BYTES & ~(MIB - 1);
 }
 int exec_parked(void) { return npark; }
+/* step 4d: the shell's process when it waits, is paused or runs beside
+   (mx_proc_spawn) the one in front, else 0; and whether proc is one that waits or is paused (not a service),
+   so that the command thread can bring it in front */
+int exec_shell_parked(void) {
+  for (int i = npark - 1; i >= 0; i--)
+    if (parks[i]->shell && !parks[i]->service)
+      return parks[i]->proc;
+  return 0;
+}
+int exec_proc_parked(int proc) {
+  for (int i = 0; proc > 0 && i < npark; i++)
+    if (parks[i]->proc == proc && !parks[i]->service)
+      return 1;
+  return 0;
+}
 /* the physical memory of the program that ends (sound_off): all from 1 MiB
    up but the cores of those that wait or run beside it, at the top */
 void exec_end_range(u32 *lo, u32 *hi) {
@@ -491,6 +507,7 @@ int exec_park(int beside) {
   }
   parks[npark] = q;
   q->tid = user_tid, q->shell = shell, q->beside = beside;
+  q->pad_closes = pads_closed();
   /* its VM stays: not saved or set back with the rest (end.c) */
   q->space = core_vm && mx_vm_active() ? mx__vm_space_now() : 0;
   vm_kept += q->space != 0;
@@ -520,6 +537,7 @@ int exec_park(int beside) {
 /* in the command thread, the other ended (or did not start: status -1): the
    one it was started by is in front again */
 void exec_unpark(int status) {
+  int ended = end_proc_front(); /* before its state is the other's */
   kvm_front_gone();
   int side = 0;
   if (park.beside) {
@@ -538,7 +556,8 @@ void exec_unpark(int status) {
     mxlink_restart();
   }
   end_state_load(park.state);
-  mx__pad_forget(); /* its ports were closed: its next mx_pad_init opens them */
+  if (park.pad_closes != pads_closed())
+    mx__pad_forget(); /* its ports were closed: its next mx_pad_init opens them */
   user_tid = park.tid, shell = park.shell, on_libmxk = 1, core_moved = 1;
   core_vm = park.space != 0;
   core_end = park.core_end, core_phys = park.core_phys, frames_hi = park.frames_hi;
@@ -569,9 +588,12 @@ void exec_unpark(int status) {
   park_status = status;
   park_done = 1;
   last_child = child, last_child_status = status;
-  if (child) {
+  /* one that this one started, but that came in front by mx_proc_front
+     (home, or a kill of it while it was paused): its end too */
+  int ev = child ? child : ended > 0 && ptab_parent(ended) == end_proc_front() ? ended : 0;
+  if (ev) {
     /* its end to this one's event port (kernel version 15) */
-    struct mx_event e = {MX_EVENT_END, child, status, 0};
+    struct mx_event e = {MX_EVENT_END, ev, status, 0};
     kmsg_post(end_proc_front(), &e, sizeof e);
   }
   if (side)
@@ -648,6 +670,7 @@ int exec_front_switch(int proc, char *path) {
     parks[k] = parks[k + 1];
   parks[npark - 1] = q;
   q->tid = user_tid, q->shell = shell, q->beside = 0;
+  q->pad_closes = pads_closed();
   q->space = core_vm && mx_vm_active() ? mx__vm_space_now() : 0;
   vm_kept += q->space != 0;
   q->core_pin = core_pin, q->core_pin_bytes = core_pin_bytes;
@@ -676,7 +699,10 @@ int exec_front_switch(int proc, char *path) {
     mxlink_restart();
   }
   end_state_load(t->state);
-  mx__pad_forget();
+  /* its ports: open as it left them, unless a program's end closed them
+     meanwhile (step 4d: the home button's game reads its pad again) */
+  if (t->pad_closes != pads_closed())
+    mx__pad_forget();
   user_tid = t->tid, shell = t->shell, on_libmxk = 1, core_moved = 1;
   core_vm = t->space != 0;
   core_end = t->core_end, core_phys = t->core_phys, frames_hi = t->frames_hi;
@@ -690,6 +716,7 @@ int exec_front_switch(int proc, char *path) {
   core_pin = t->core_pin, core_pin_bytes = t->core_pin_bytes;
   if (t->vu_kept)
     kproc_vu_load(t->side_rec);
+  home_video_again(); /* its video mode, which the other may have changed */
   end_unpark_proc(proc, t->beside);
   ptab_state(proc, MX_PROC_FRONT);
   memcpy(path, t->path, sizeof t->path);
@@ -859,6 +886,7 @@ static const struct mxk_services kernel = {
     .proc_wait = kproc_wait,
     .proc_kill = kproc_kill,
     .proc_front = kproc_front,
+    .proc_shell = kproc_shell,
     .sleep_us = mx_sleep_us,
     .proc_events = kmsg_events,
     .log_read = klog_read,

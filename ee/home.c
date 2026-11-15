@@ -21,6 +21,7 @@
 
 #include <mx/bits.h>
 #include <mx/cpu.h>
+#include <mx/crtc.h>
 #include <mx/display.h>
 #include <mx/gif.h>
 #include <mx/gs.h>
@@ -28,6 +29,7 @@
 #include <mx/irq.h>
 #include <mx/kernel.h>
 #include <mx/pad.h>
+#include <mx/proc.h>
 #include <mx/string.h>
 #include <mx/thread.h>
 #include <mx/timer.h>
@@ -54,6 +56,30 @@ void home_gs_display(const u64 *r, u32 mask) {
         MX_R64(dreg[i]) = r[i];
     }
   prog_mask |= mask;
+  mx_irq_restore(was);
+}
+
+/* the timing of the program's mode, as it last set it (kvideo_crtc_set):
+   kept with the rest of its kernel state, so that a switch (step 4d) sets
+   it again */
+static struct mx_crtc mode_crtc;
+static int crtc_known;
+void home_crtc_seen(const struct mx_crtc *c) {
+  mode_crtc = *c;
+  crtc_known = 1;
+}
+/* step 4d, in the command thread: the process brought in front (its kernel
+   state live again) gets its video mode and display back (the shell set
+   its own meanwhile, or the game's was on while the shell came) */
+void home_video_again(void) {
+  if (!crtc_known)
+    return;
+  struct mx_crtc c = mode_crtc;
+  kvideo_crtc_set(&c);
+  int was = mx_di();
+  for (int i = 0; i < MX_DISP_NREGS; i++)
+    if (prog_mask >> i & 1)
+      MX_R64(dreg[i]) = prog_regs[i];
   mx_irq_restore(was);
 }
 
@@ -87,6 +113,8 @@ u32 home_filter(u32 b) {
   }
   if (menu_up)
     return 0; /* the menu's, not the program's */
+  if (exec_in_shell())
+    return b; /* the shell's own: its home screen, no menu over it (step 4d) */
   if (!(b & MX_PAD_HOME) || quit_now)
     return b;
   /* only for a program whose maxsdk has the menu (it told the mode) */
@@ -106,6 +134,10 @@ u32 home_filter(u32 b) {
   }
   return b & ~MX_PAD_HOME;
 }
+
+/* the one in front sees no buttons until all are let go (step 4d: the
+   shell brought in front by the home button, which is still held) */
+void home_hold(void) { hold_back = 1; }
 
 u32 home_wanted(void) { return wanted && !menu_up && !quit_now ? PANEL_PAGES : 0; }
 
@@ -275,6 +307,18 @@ static u32 menu_buttons(void) {
 
 int home_run(u32 page, u32 pages) {
   wanted = 0;
+  /* step 4d: the shell waits for this program or runs beside it (it
+     started it, or brought it in front): the shell in front instead of the
+     menu, told by an event (MX_EVENT_HOME, kernel version 25); this program paused at its frame
+     boundary until the shell brings it back (mx_proc_front) or ends it */
+  int sh = exec_shell_parked();
+  int me = end_proc_front();
+  if (sh > 0 && me > 0 && sh != me) {
+    if (kproc_front_home(sh, me) == 0) {
+      hold_back = 1; /* back in front: the home button may still be held */
+      return 0;
+    }
+  }
   if (page == ~0u || pages < PANEL_PAGES || !mode_known) {
     mx_printf("mxkernel: no home menu (GS page %x, %u pages, mode %s): the home button ends the program\n",
               page, pages, mode_known ? "known" : "not told");
