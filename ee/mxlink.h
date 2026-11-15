@@ -190,6 +190,17 @@ int ksetting_set_shell(const char *key, const char *value);
 int ksetting_list(u32 after, struct mx_setting *out, int max);
 u32 ksetting_seq(void);
 int ksetting_on(const char *key);
+/* kernel version 28: the controllers for the shell (pad.c) */
+struct mx_pad_info;
+struct mx_pad_pairing;
+struct mx_pad_paired;
+int kpad_info(int port, struct mx_pad_info *i);
+int kpad_disconnect(int port);
+int kpad_pair(u32 seconds);
+int kpad_pair_state(struct mx_pad_pairing *p);
+int kpad_paired(struct mx_pad_paired *p, int max);
+int kpad_forget(u32 id);
+u32 kpad_gen(void);
 struct vm_space *exec_front_space(void);
 void kproc_side_end(void);
 int kproc_side(void);
