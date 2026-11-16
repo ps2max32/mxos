@@ -178,8 +178,8 @@ static u32 kcall(u32 a, u32 v, u32 write) { return kcall4(a, v, write, 0); }
    host link's writemem). 0, or -1. */
 int kmem_copy(u32 phys, void *buf, u32 n, int write) {
   u32 size = MX_MAIN_BYTES, a = (u32)(uintptr_t)buf;
-  if (!on || phys >= size || n > size - phys || !n || mx_is_vm(buf) || a < 0x100000u ||
-      a + n < a || a + n > 0x02000000u || (write && !exec_service_caller()))
+  if (!on || phys >= size || n > size - phys || !n || mx_is_vm(buf) || a < MX_CORE_LO ||
+      a + n < a || a + n > MX_CORE_HI || (write && !exec_service_caller()))
     return -1;
   for (u32 done = 0; done < n;) {
     u32 k = n - done > 4096 ? 4096 : n - done;

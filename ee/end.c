@@ -117,7 +117,7 @@ void end_snapshot(int proc) {
 /* in core memory of a program, and the whole range */
 static int program_range(const void *p, u32 bytes) {
   u32 a = (u32)(uintptr_t)p;
-  return a >= 0x00100000u && a < 0x02000000u && bytes <= 0x02000000u - a;
+  return a >= MX_CORE_LO && a < MX_CORE_HI && bytes <= MX_CORE_HI - a;
 }
 
 void end_irq_tables(const struct mxk_irq_tables *t) {

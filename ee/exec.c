@@ -54,7 +54,7 @@ struct thread_param {
 #define MAX_PHDRS 16
 #define LOW 0x00100000u
 #define TOP 0x02000000u
-/* below LOW: loaders (ps2link, mxlink itself at 0x88000), above the EE
+/* below LOW: loaders (ps2link, a kernel from before it moved up), above the EE
    kernel; started by ExecPS2 */
 #define LOADER_LOW 0x00088000u
 #define USER_PRIO 64
@@ -86,10 +86,11 @@ void exec_self(u32 *start, u32 *end) {
                     : (u32)(uintptr_t)__stack + (u32)(uintptr_t)__stack_size;
 }
 
+/* in its own memory (MX_KERNEL_LO), not in the programs' */
 int exec_resident(void) {
   u32 start, end;
   exec_self(&start, &end);
-  return end <= LOW;
+  return start >= MX_KERNEL_LO;
 }
 
 /* The program ended without the restart (main.c): its thread is gone. */
@@ -182,7 +183,7 @@ static u32 core_pin_bytes;
 
 static int core_place(u32 end, u32 heap) {
   u32 va_end = (end + heap + MIB - 1) & ~(MIB - 1), run = va_end - LOW;
-  if (va_end > TOP)
+  if (va_end > MX_CORE_HI)
     return -1;
   u32 phys;
   if (VM_KEPT) {
@@ -361,17 +362,19 @@ static void kvm_shutdown(void) {
 
 /* mx OS plan 4e: the VM at the kernel's boot, after the IOP is up (its
    swap file; the IOP modules were read to the programs' memory, free now).
-   The frames are all memory from 1 MiB but the tables' 64 KiB at the top.
+   The frames are all memory from 1 MiB up to the kernel; the tables are in
+   the kernel's last 64 KiB (resident.ld: __mx_tables).
    0, or -1: programs are placed as before. */
 int mx__vm_boot(u32 phys_lo, u32 phys_hi, int prio);
 void mx__heap_range(void *lo, void *hi);
 extern const char *mx__loader_swap;
 int kvm_boot(void) {
   if (!exec_resident())
-    return -1; /* mxkernel-high: in the programs' memory */
-  u32 top = MX_MAIN_BYTES & ~(MIB - 1), tables = 64u << 10;
+    return -1;
+  extern char __mx_tables[];
+  u32 top = MX_KERNEL_HI, tables = (u32)(uintptr_t)__mx_tables;
   mx__heap_range((void *)(uintptr_t)(top - tables), (void *)(uintptr_t)top);
-  if (mx__vm_boot(LOW, top - tables, 1) < 0)
+  if (mx__vm_boot(LOW, MX_KERNEL_LO, 1) < 0)
     return -1;
   vm_boot = 1;
   boot_space = mx__vm_space_now();
@@ -399,7 +402,7 @@ void *mx__phys_alloc(u32 bytes, u32 align);
 void mx__phys_free(void *p);
 
 static u32 mem_top(void) {
-  return npark ? park.core_phys : MX_MAIN_BYTES & ~(MIB - 1);
+  return npark ? park.core_phys : MX_KERNEL_LO;
 }
 int exec_parked(void) { return npark; }
 /* step 4d: the shell's process when it waits, is paused or runs beside
@@ -421,7 +424,7 @@ int exec_proc_parked(int proc) {
    up but the cores of those that wait or run beside it, at the top */
 void exec_end_range(u32 *lo, u32 *hi) {
   *lo = LOW;
-  *hi = npark ? park.core_phys : MX_MAIN_BYTES;
+  *hi = npark ? park.core_phys : MX_KERNEL_LO;
 }
 
 /* the program a parked one started (proc_spawn, proc_wait; kernel version
@@ -1071,12 +1074,10 @@ int exec_elf(int argc, const char *args, u32 args_len) {
               LOADER_LOW, TOP);
       return fail(fd, path, "a segment is not where the kernel can load it");
     }
-    /* not over mxlink itself (make high: at 0x1E00000, in the programs'
-       memory), its stack included: starting mxlink-high.elf from it hung
-       the PS2 */
+    /* not over the kernel itself */
     if (p->vaddr < self_end && p->vaddr + p->memsz > self_start) {
-      if (p->vaddr < LOW) {
-        over_self = 1; /* below 1 MiB: another kernel, which replaces this one */
+      if (p->vaddr >= MX_KERNEL_LO) {
+        over_self = 1; /* in the kernel's memory: another kernel, which replaces this one */
         continue;
       }
       con_log(CON_RED, "segment %u at %08x, %u bytes: over the kernel at %08x-%08x", i, p->vaddr,
@@ -1113,7 +1114,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   if (version < 10)
     return fail(fd, path, "not an MXOS program (libmxk): a standalone ELF is started by mxboot or a "
                           "legacy loader");
-  if (self_end > LOW)
+  if (!exec_resident())
     core_off_at = 0;
   int note_v9 = core_off_at != 0;
   if (core_off_at && !vm && !heap)
@@ -1208,9 +1209,9 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   largs.pid = vm ? MX_LOADER_MAGIC : (u32)(uintptr_t)&user_tid;
   /* the way back for maxsdk programs: only from the resident mxlink (below
      the programs; mxlink-high is in their memory) */
-  largs.ret_magic = self_end <= LOW ? MX_LOADER_RET : 0;
+  largs.ret_magic = exec_resident() ? MX_LOADER_RET : 0;
   largs.ret = mxlink_return;
-  largs.launch_magic = self_end <= LOW ? MX_LOADER_LAUNCH : 0;
+  largs.launch_magic = exec_resident() ? MX_LOADER_LAUNCH : 0;
   largs.launch = mxlink_launch;
   /* the swap file: its launch's, else MXOS's (mc0:/MXOS/SWAP.CFG, plan 3c) */
   u32 swap_bytes = 0;
@@ -1218,7 +1219,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   /* 4e: only MXOS's */
   largs.swap = program_swap = mx__loader_swap = next_swap && !vm_boot ? next_swap : mxos_swap;
   next_swap = 0;
-  largs.kernel_magic = self_end <= LOW ? MX_KERNEL_MAGIC : 0;
+  largs.kernel_magic = exec_resident() ? MX_KERNEL_MAGIC : 0;
   largs.kernel = &kernel;
 
   program_note = 0;

@@ -12,9 +12,21 @@
 
 #define TLB_N 48
 #define TLB_FIRST 2  /* 0, 1: the scratchpad and the kernel, never changed */
-#define TLB_USED 39  /* the others: unused, V = 0 */
-#define TLB_RESIDENT 13 /* 0x80000-0xFFFFF: mxlink, its code in the upper half */
+#define TLB_USED 45  /* the others: unused, V = 0 */
+/* The kernel's own two entries (MX_KERNEL_LO, the last MiB: pages of 256
+   KiB), in place of the end of the BIOS's entry 21 (0x1800000-0x1FFFFFF):
+   its code without D, so a store of a program there is a TLB modified
+   exception, and its data. Never cleared: the code running here is in them. */
+#define TLB_KCODE 21
+#define TLB_KDATA 40
 #define LO_D 4u
+#define PM256K 0x0007e000u
+#define KCODE_HI MX_KERNEL_LO
+#define KCODE_LO0 (MX_KERNEL_LO >> 12 << 6 | 0x1Bu)
+#define KCODE_LO1 ((MX_KERNEL_LO + 0x40000u) >> 12 << 6 | 0x1Bu)
+#define KDATA_HI (MX_KERNEL_LO + 0x80000u)
+#define KDATA_LO0 ((MX_KERNEL_LO + 0x80000u) >> 12 << 6 | 0x1Fu)
+#define KDATA_LO1 ((MX_KERNEL_LO + 0xC0000u) >> 12 << 6 | 0x1Fu)
 
 static const struct {
   u32 pm, hi, lo0, lo1;
@@ -30,7 +42,9 @@ static const struct {
     {0x0001e000, 0x11000000, 0x00440017, 0x00440415},
     {0x0001e000, 0x12000000, 0x00480017, 0x00480415},
     {0x01ffe000, 0x1e000000, 0x00780017, 0x007c0017},
-    {0x0007e000, 0x00080000, 0x0000201f, 0x0000301f},
+    /* cached main memory from 1 MiB (13-20: TLB_CORE, a program's core in
+       their place); the BIOS has these one slot up, and one entry for
+       0x1800000-0x1FFFFFF, which ends in the kernel here: 20 and 41-44 */
     {0x0007e000, 0x00100000, 0x0000401f, 0x0000501f},
     {0x0007e000, 0x00180000, 0x0000601f, 0x0000701f},
     {0x001fe000, 0x00200000, 0x0000801f, 0x0000c01f},
@@ -38,7 +52,8 @@ static const struct {
     {0x001fe000, 0x00600000, 0x0001801f, 0x0001c01f},
     {0x007fe000, 0x00800000, 0x0002001f, 0x0003001f},
     {0x007fe000, 0x01000000, 0x0004001f, 0x0005001f},
-    {0x007fe000, 0x01800000, 0x0006001f, 0x0007001f},
+    {0x001fe000, 0x01800000, 0x0006001f, 0x0006401f},
+    [TLB_KCODE] = {PM256K, KCODE_HI, KCODE_LO0, KCODE_LO1},
     {0x0007e000, 0x20080000, 0x00002017, 0x00003017},
     {0x0007e000, 0x20100000, 0x00004017, 0x00005017},
     {0x0007e000, 0x20180000, 0x00006017, 0x00007017},
@@ -56,6 +71,12 @@ static const struct {
     {0x007fe000, 0x30800000, 0x0002003f, 0x0003003f},
     {0x007fe000, 0x31000000, 0x0004003f, 0x0005003f},
     {0x007fe000, 0x31800000, 0x0006003f, 0x0007003f},
+    {0x0007e000, 0x00080000, 0x0000201f, 0x0000301f}, /* the BIOS's 13 */
+    [TLB_KDATA] = {PM256K, KDATA_HI, KDATA_LO0, KDATA_LO1},
+    {0x001fe000, 0x01a00000, 0x0006801f, 0x0006c01f},
+    {0x001fe000, 0x01c00000, 0x0007001f, 0x0007401f},
+    {0x0007e000, 0x01e00000, 0x0007801f, 0x0007901f},
+    {0x0007e000, 0x01e80000, 0x0007a01f, 0x0007b01f},
 };
 
 static void tlb_read(u32 i, u32 *pm, u32 *hi, u32 *lo0, u32 *lo1) {
@@ -73,20 +94,34 @@ static void tlb_write(u32 i, u32 pm, u32 hi, u32 lo0, u32 lo1) {
                    : "r"(i), "r"(pm), "r"(hi), "r"(lo0), "r"(lo1), "r"(mx__asid));
 }
 
-/* mxlink's entry as it should be: the upper half without D for the resident
-   one, so a store of a program there is a TLB modified exception. Not the
-   lower half: the kernel writes 0x80000-0x87FFF through it, and without D the
-   PS2 hangs. One tlbwi: the code running here is in it, so it is not cleared
-   first. */
-static void tlb_resident(u32 lo1) {
-  tlb_write(TLB_RESIDENT, bios_tlb[TLB_RESIDENT].pm, bios_tlb[TLB_RESIDENT].hi,
-            bios_tlb[TLB_RESIDENT].lo0, lo1);
+/* The kernel's code entry with or without the right to write: one tlbwi (the
+   code running here is in it, so it is not cleared first). */
+static void tlb_kcode(u32 d) {
+  tlb_write(TLB_KCODE, PM256K, KCODE_HI, KCODE_LO0 | d, KCODE_LO1 | d);
 }
 
 void tlb_writable(void) {
   int was = mx_di();
-  tlb_resident(bios_tlb[TLB_RESIDENT].lo1);
+  tlb_kcode(LO_D);
   mx_irq_restore(was);
+}
+
+/* The first start (mxboot's or PCSX2's ExecPS2): the kernel runs under the
+   BIOS's entry 21. Its own two in its place, with nothing read or written
+   between the two tlbwi (all in registers): after the first one only its
+   code is mapped. Interrupts off. */
+static void tlb_kernel_first(void) {
+  u32 pm, hi, lo0, lo1;
+  tlb_read(TLB_KCODE, &pm, &hi, &lo0, &lo1);
+  if (pm == PM256K && (hi & ~0xFFu) == KCODE_HI)
+    return; /* a restart, or a kernel that replaced another: its own already */
+  __asm__ volatile("mtc0 %0, $0\n\tmtc0 %2, $5\n\tmtc0 %3, $10\n\tmtc0 %4, $2\n\tmtc0 %5, $3\n\t"
+                   "sync.p\n\ttlbwi\n\tsync.p\n\t"
+                   "mtc0 %1, $0\n\tmtc0 %6, $10\n\tmtc0 %7, $2\n\tmtc0 %8, $3\n\t"
+                   "sync.p\n\ttlbwi\n\tsync.p\n\tmtc0 %9, $10\n\tsync.p"
+                   :
+                   : "r"(TLB_KCODE), "r"(TLB_KDATA), "r"(PM256K), "r"(KCODE_HI), "r"(KCODE_LO0),
+                     "r"(KCODE_LO1), "r"(KDATA_HI), "r"(KDATA_LO0), "r"(KDATA_LO1), "r"(mx__asid));
 }
 
 /* After ExecPS2, not before it: until then a killed program's vblank handler
@@ -96,7 +131,7 @@ void tlb_writable(void) {
    entries matching one address are undefined), parked above the BIOS's
    unused ones, then written. Those that are right stay, so the code running
    here stays mapped. */
-#define TLB_CORE 14
+#define TLB_CORE 13
 #define TLB_CORE_N 8
 /* the core slots of a process beside the one in front (step 2e-2, kproc.c):
    kept by tlb_restore, which then leaves out the BIOS's entries over its
@@ -114,9 +149,10 @@ void tlb_restore(void) {
      to this), virtual = physical */
   mx__asid_set(0);
   mx__core_off = 0;
+  tlb_kernel_first();
   for (u32 i = TLB_FIRST; i < TLB_N; i++) {
     u32 pm, hi, lo0, lo1;
-    if (i == TLB_RESIDENT || (i >= TLB_CORE && i < TLB_CORE + core_keep)) {
+    if (i == TLB_KCODE || i == TLB_KDATA || (i >= TLB_CORE && i < TLB_CORE + core_keep)) {
       differs[i] = 0;
       continue;
     }
@@ -138,23 +174,26 @@ void tlb_restore(void) {
       tlb_write(i, 0, 0xE0000000u + (i << 13), 0, 0);
     else if (differs[i])
       tlb_write(i, bios_tlb[i].pm, bios_tlb[i].hi, bios_tlb[i].lo0, bios_tlb[i].lo1);
-  tlb_resident(exec_resident() ? bios_tlb[TLB_RESIDENT].lo1 & ~LO_D : bios_tlb[TLB_RESIDENT].lo1);
+  tlb_kcode(0);
   mx_irq_restore(was);
 }
 
 /* A program's core [0x10_0000, va_end) at physical 0x10_0000 + off, under
    the ASID now set (mx__asid; docs/mx-os-plan.md, step 2b): the BIOS's
-   global entries of cached main memory from 0x10_0000 (14-21) give way to
+   global entries of cached main memory from 0x10_0000 (13-20) give way to
    entries of that ASID, pages of 4 MiB, 1 MiB or 256 KiB as the alignment
    allows (the main stack is in the core: maxsdk's VM linker scripts). va_end
    and off: multiples of 1 MiB. The entries it took (after those kept for a
    process beside, tlb_core_keep), or -1, the TLB unchanged, if more than
-   those 8 are needed. tlb_restore writes the BIOS's back. */
+   those 8 are needed or it reaches the entries that stay (41-44). tlb_restore writes the BIOS's back. */
 #define LO_CORE 0x1Eu /* cached, D, V, not global */
+#define CORE_VA_MAX 0x01A00000u
 
 int tlb_core_map(u32 va_end, u32 off) {
   u32 pm[TLB_CORE_N], hi[TLB_CORE_N], lo0[TLB_CORE_N], lo1[TLB_CORE_N], n = 0;
   u32 first = TLB_CORE + core_keep, max = TLB_CORE_N - core_keep;
+  if (va_end > CORE_VA_MAX)
+    return -1;
   for (u32 v = 0x00100000u; v < va_end; n++) {
     u32 s = 4u << 20;
     while (s > (256u << 10) && (v % (2 * s) || (v + off) % s || v + 2 * s > va_end))
@@ -204,11 +243,11 @@ void tlb_emu_asid(u32 asid) {
    ASID: the PS2 gives the first page's word (probe/p33_asid.c), PCSX2 the
    second's, the last written. All put back. Interrupts off. 1: it does not. */
 int tlb_ignores_asid(void) {
-  const u32 va = 0x7F000000u, a = 0x88000u;
+  const u32 va = 0x7F000000u, a = MX_KERNEL_LO, end = MX_KERNEL_LO + 0x40000u;
   u32 b = a + 0x1000u;
-  while (b < 0xC0000u && *(volatile u32 *)(uintptr_t)b == *(volatile u32 *)(uintptr_t)a)
+  while (b < end && *(volatile u32 *)(uintptr_t)b == *(volatile u32 *)(uintptr_t)a)
     b += 0x1000u;
-  if (b >= 0xC0000u)
+  if (b >= end)
     return 0; /* no two pages to tell apart: as the PS2 */
   u32 want_a = *(volatile u32 *)(uintptr_t)a, want_b = *(volatile u32 *)(uintptr_t)b;
   int was = mx_di();

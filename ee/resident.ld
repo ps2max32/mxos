@@ -1,27 +1,55 @@
-/* Linker script of the resident mxlink (lld): what is written from __mx_base,
-   its stack just below __mx_text, then the code and read-only data from
-   __mx_text to __mx_top, each in a segment of its own. The BIOS's TLB entry 13
-   maps 0x80000-0xFFFFF in halves of 256 KiB: ee/tlb.c takes the right to write
-   from the upper one (the lower one holds 0x80000-0x87FFF, which the kernel
-   writes through it), so a wild store of a program into mxlink's code is an
-   exception. __self_start and __self_end: what mxlink takes (ee/exec.c). */
+/* Linker script of the kernel (lld): the last MiB of main memory
+   (<mx/cpu.h>: MX_KERNEL_LO), virtual = physical. Its code and read-only
+   data from __mx_text, its data from __mx_data to __mx_top, each in a segment
+   of its own and under a TLB entry of its own (ee/tlb.c): the code's without
+   the right to write, so a wild store of a program into it is an exception.
+   What a loader writes (mxboot, which runs in the last 256 KiB) ends below
+   __mx_top - 256 KiB: the code, .data and .kept. .bss (the kernel clears it
+   itself), its heap, the main stack and the VM's tables (__mx_tables, at the
+   top: ee/exec.c's kvm_boot) are in no segment. __self_start and __self_end:
+   what the kernel takes (ee/exec.c). */
 
 OUTPUT_ARCH(mips)
 ENTRY(mxlink_start)
 
 MEMORY {
-  ram : ORIGIN = __mx_base, LENGTH = __mx_top - __mx_base
+  text : ORIGIN = __mx_text, LENGTH = __mx_data - __mx_text
+  ram : ORIGIN = __mx_data, LENGTH = __mx_top - __mx_data
   spr : ORIGIN = 0x70000000, LENGTH = 16K
 }
 
 PHDRS {
-  data PT_LOAD;
   text PT_LOAD;
+  data PT_LOAD;
 }
 
 SECTIONS {
-  __self_start = __mx_base;
+  __self_start = __mx_text;
   __self_end = __mx_top;
+
+  .text ORIGIN(text) : {
+    __text_start = .;
+    KEEP(*(.text.start))
+    *(.text .text.*)
+    __text_end = .;
+  } >text :text
+
+  /* VU microcode, kept 16-byte aligned so it can be sent with MPG. */
+  .vutext : ALIGN(16) { *(.vutext .vutext.*) } >text
+
+  .rodata : ALIGN(128) { *(.rodata .rodata.*) *(.rdata) } >text
+
+  .init_array : ALIGN(16) {
+    __init_array_start = .;
+    KEEP(*(SORT(.init_array.*)))
+    KEEP(*(.init_array))
+    __init_array_end = .;
+  } >text
+
+  /* Written by the IOP's DMA (ee/pad.c: the USB pads' area), not loaded, not
+     cleared: with the code, written through the uncached alias only. */
+  .padarea (NOLOAD) : ALIGN(64) { *(.padarea) . = ALIGN(64); } >text
+
 
   /* The kernel's state of a program (ee/end.c): its .data here, its .bss
      below; set back as linked when a program ends without the restart. Of
@@ -62,6 +90,7 @@ SECTIONS {
   /* What survives a restart (ExecPS2); all before __data_end is set back by
      mxlink_start, from __data_copy. */
   .kept : ALIGN(16) { KEEP(*(.kept)) } >ram
+  __loaded_end = .;
 
   .bss (NOLOAD) : ALIGN(128) {
     __bss_start = .;
@@ -108,40 +137,21 @@ SECTIONS {
     *(.bss .bss.*) *(COMMON)
     . = ALIGN(16);
     __bss_end = .;
-  } >ram
+  } >ram :NONE
   .data_copy (NOLOAD) : { __data_copy = .; . += __data_end - __data_start; } >ram
   _end = .;
 
-  .text __mx_text : {
-    __text_start = .;
-    KEEP(*(.text.start))
-    *(.text .text.*)
-    __text_end = .;
-  } >ram :text
-
-  /* VU microcode, kept 16-byte aligned so it can be sent with MPG. */
-  .vutext : ALIGN(16) { *(.vutext .vutext.*) } >ram
-
-  .rodata : ALIGN(128) { *(.rodata .rodata.*) *(.rdata) } >ram
-
-  .init_array : ALIGN(16) {
-    __init_array_start = .;
-    KEEP(*(SORT(.init_array.*)))
-    KEEP(*(.init_array))
-    __init_array_end = .;
-  } >ram
-
-  /* Written by the IOP's DMA (ee/pad.c: the USB pads' area), not loaded, not
-     cleared: in the upper half, written through the uncached alias only. */
-  .padarea (NOLOAD) : ALIGN(64) { *(.padarea) . = ALIGN(64); } >ram
 
   /* Scratchpad: 16 KiB at 0x7000_0000, not loaded, not cleared. */
   .spr (NOLOAD) : { *(.spr .spr.*) } >spr
 
   /DISCARD/ : { *(.MIPS.abiflags) *(.reginfo) *(.gnu.attributes) *(.comment) *(.pdr) }
 
+  /* the main stack below the VM's tables; the kernel's heap is from _end up
+     to it (maxsdk's start.c) */
   PROVIDE(__stack_size = __mx_stack_size);
-  PROVIDE(__stack = __mx_text - __stack_size);
+  PROVIDE(__stack = __mx_top - __mx_tables - __stack_size);
 }
 
-ASSERT(_end <= __stack, "mxlink's data leaves no room for the stack below its code")
+ASSERT(_end <= __stack, "the kernel's data leaves no room for its stack")
+ASSERT(__loaded_end <= __mx_top - 0x40000, "the kernel's loaded data reaches where mxboot runs")

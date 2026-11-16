@@ -534,7 +534,7 @@ void mx__crash_end(int status) {
 void mx__crash_kept(struct mx_crash *c) {
   const char *const *np = exec_note();
   const char *note = np && *np ? *np : c->note;
-  if (note && ((u32)(uintptr_t)note < 0x00080000u || (u32)(uintptr_t)note >= 0x02000000u))
+  if (note && ((u32)(uintptr_t)note < MX_CORE_LO || (u32)(uintptr_t)note >= MX_KERNEL_HI))
     note = 0; /* not in core */
   u32 n = 0;
   for (; note && note[n] && n < sizeof crash_note - 1; n++)
@@ -1167,8 +1167,8 @@ static void screen(void) {
   con_line(ROW_HOST, CON_WHITE, "Boot:   %s%s", boot_path, restarts > 1 ? "  (restarted)" : "");
   u32 self_start, self_end;
   exec_self(&self_start, &self_end);
-  con_line(ROW_MEM, CON_WHITE, "Memory: kernel %05x-%05x, programs 00100000-%08x",
-           self_start, self_end, MX_MAIN_BYTES);
+  con_line(ROW_MEM, CON_WHITE, "Memory: kernel %08x-%08x, programs 00100000-%08x",
+           self_start, self_end, MX_KERNEL_LO);
   if (last_path[0])
     con_line(ROW_LAST, last_status ? CON_RED : CON_WHITE, "Last:   %s, exit status %d", last_path,
              (int)last_status);

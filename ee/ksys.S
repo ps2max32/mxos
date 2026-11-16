@@ -7,9 +7,9 @@
 
    First the count (2h-3): a syscall of the watched program (EntryHi's ASID
    that of the program the kernel started last, ksys_watch) from its own code
-   (EPC from 1 MiB up, not in kseg0 or kseg1: not the kernel's or the BIOS's)
+   (EPC not in the kernel's MiB, kseg0 or kseg1: not the kernel's or the BIOS's)
    counts in ksys_counts[v1 & 0xFF] (an i-call's negative number at
-   0x81-0xFF); one from the kernel's own code (below 1 MiB) that goes on
+   0x81-0xFF); one from the kernel's own code (its MiB) that goes on
    into the BIOS in ksys_kcounts, since its boot (what 2h-4 has left).
 
    Then the kernel's own numbers (2h-4a; ksys_handlers[|v1| & 0x7F], set by
@@ -40,7 +40,8 @@ ksys_entry:
 	srl $27, $26, 31
 	bnez $27, 3f			/* kseg0, kseg1: the BIOS's own */
 	srl $27, $26, 20
-	beqz $27, 3f			/* below 1 MiB: the kernel's own (at 9) */
+	xori $27, $27, KERNEL_MIB
+	beqz $27, 3f			/* in the kernel's MiB: its own (at 9) */
 	nop
 	mfc0 $26, $10			/* EntryHi: the ASID */
 	lui $27, %hi(ksys_watch + 0x80000000)
@@ -128,12 +129,11 @@ ksys_entry:
 	eret
 	nop
 
-	/* on into the BIOS: one of the kernel's own (EPC below 1 MiB) counts
+	/* on into the BIOS: one of the kernel's own (EPC in its MiB) counts
 	   in ksys_kcounts (what 2h-4 has left to replace) */
 9:	mfc0 $26, $14
 	srl $27, $26, 20
-	bnez $27, 8f
-	srl $27, $26, 31
+	xori $27, $27, KERNEL_MIB
 	bnez $27, 8f
 	andi $26, $3, 0xff
 	sll $26, $26, 2

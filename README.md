@@ -19,8 +19,9 @@ What it adds to ps2link:
   memory (`MX_MEMORY=vm`) run directly (`ps2client execee host:app.elf`), no
   nothing in between. Other programs, ps2sdk's included, get ps2link's
   arguments as they are.
-- An ELF below 1 MiB (a loader: another kernel, ps2link) is started by
-  ExecPS2 and takes over the PS2. An ELF over the kernel itself is refused.
+- An ELF in the kernel's own memory (another kernel) replaces the running
+  one. An ELF below 1 MiB (a loader such as ps2link) is refused, and so is a
+  program over the kernel.
 - A status screen: the network, the boot path, the kernel's memory, the state,
   and a log of the commands and errors (soft-edged text, 640 x 448 NTSC,
   640 x 512 PAL).
@@ -71,7 +72,7 @@ What it adds to ps2link:
   `MXOS/`).
 - The BIOS's TLB is written back at every start (`ee/tlb.c`): ExecPS2 leaves
   it as it is, so a killed program's VM entries would stay. The kernel's code,
-  from 0xC0000, is read-only for programs: a wild store there is an exception.
+  from 0x1F00000, is read-only for programs: a wild store there is an exception.
 - `ps2client status` says what it is doing (state, program, programs
   returned, last exit status) and which PS2 it is on: its model
   (`SCPH-70004`) and `rom0:ROMVER`, each `unknown` if the PS2 does not say.
@@ -86,12 +87,15 @@ command, the VU register dumps.
 ## Build
 
 ```
-make all high      # build/apps/mxos/MXKERNEL.ELF, mxkernel-high.elf
+make all           # build/apps/mxos/MXKERNEL.ELF
 make shell         # mxshell into build/apps/mxos/MXOS
 ```
 
-- `MXKERNEL.ELF`: resident at 0x88000-0xFF800, below the programs;
-  the one to install.
+- `MXKERNEL.ELF`: resident in the last MiB of main memory
+  (0x1F00000-0x1FFFFFF), above the programs; the one to install. To try a
+  build without installing it: `ps2client execee host:MXKERNEL.ELF` replaces
+  the running kernel (the connection ends: expected); a reset boots the
+  installed one again.
 - `MXOS/*.irx`: the IOP modules. The kernel reads them from `mc0:/MXOS` at each
   IOP start, with what the IOP has or else with the ROM's memory card drivers,
   so it needs them there: without them it has no network. `ps2link.irx` comes
@@ -109,11 +113,6 @@ make shell         # mxshell into build/apps/mxos/MXOS
   directory of their own, e.g. `mc0:/MXOS/NEW`, and boot that kernel as the
   one-shot (`once mc0: mc?:/MXOS/NEW/MXKERNEL.ELF`): if it fails, a reset boots
   the default. The memory card driver is maxsdk's `mxmc` (16 open files).
-- `mxkernel-high.elf`: the same at 0x1E00000, to try a build without
-  installing it: from a running loader, `ps2client execee
-  host:mxkernel-high.elf` (its IOP reset ends the connection: expected), then
-  the same with `host:MXKERNEL.ELF`, then the tests. A reboot starts the
-  installed loader again.
 - `make SHOT=1`: on PCSX2 (no network there) the start stops at SMAP; this
   saves the screen to `host:mxkernel.tga` there and prints the test end marker.
 - Needs maxsdk (its own copy of libmx, built for size, in

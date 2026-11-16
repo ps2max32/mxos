@@ -4,6 +4,9 @@
 
 /* the kernel's syscall stack (ksys.S, kirq.c's ksys_stack: 2h-4d-2) */
 #define KSYS_STACK 4096
+/* the kernel's MiB (<mx/cpu.h>: MX_KERNEL_LO >> 20; checked in ksched.c), for
+   ksys.S: whose syscall it is, by its EPC */
+#define KERNEL_MIB 0x1F
 
 /* a thread's context (struct kctx): the GPRs at KC_R + 16 n (zero, k0 and
    k1 unused), HI/LO, HI1/LO1, SA, EPC, IE (the Status bit it runs with),

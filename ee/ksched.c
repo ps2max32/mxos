@@ -619,15 +619,17 @@ static void owned_again(void) {
 static u8 order[NHANDLERS];
 static int norder;
 
+_Static_assert(MX_KERNEL_LO >> 20 == KERNEL_MIB && MX_KERNEL_HI - MX_KERNEL_LO == 1u << 20,
+               "ksched.h's KERNEL_MIB is the kernel's MiB");
 static int add_handler(int line, int n, khandler fn, int next, void *arg) {
   int was = mx_di();
   for (int i = 1; i <= NHANDLERS; i++)
     if (!handler[i].fn) {
       handler[i].fn = fn, handler[i].arg = arg, handler[i].line = (s16)line, handler[i].n = (s16)n;
-      /* the kernel's own code (below 1 MiB: its irq.c, added in a program's
+      /* the kernel's own code (MX_KERNEL_LO up: its irq.c, added in a program's
          thread at its first call that needed it) is the kernel's, process
          0; a program's in its memory, its process */
-      handler[i].proc = (u32)(uintptr_t)fn < 0x00100000u ? 0 : cur()->proc;
+      handler[i].proc = (u32)(uintptr_t)fn >= MX_KERNEL_LO ? 0 : cur()->proc;
       int at = 0;
       if (next == -1)
         at = norder;
