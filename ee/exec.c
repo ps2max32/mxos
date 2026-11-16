@@ -976,6 +976,7 @@ static const struct mxk_services kernel = {
     .home_picture = kpic_get,
     .home_picture_read = kpic_read,
     .front_wait = kproc_front_wait,
+    .gfx_gen = end_gfx_gen,
     .sleep_us = mx_sleep_us,
     .proc_events = kmsg_events,
     .log_read = klog_read,

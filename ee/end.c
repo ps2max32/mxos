@@ -89,10 +89,17 @@ static int drop;
 /* the process of the program in front, and of the last one that waits (0:
    none) */
 int end_proc_front(void) { return proc_now; }
+/* Kernel version 34 (mx OS plan step 5b): how often the graphics went to
+   another process or were reset: another process in front, or the units
+   reset at the end of the one in front. A program whose count moved since
+   its last frame takes its graphics up again (maxsdk's mx__frame_lost). */
+static u32 gfx_gen;
+u32 end_gfx_gen(void) { return gfx_gen; }
 int end_proc_parked(void) { return nparked ? parked.proc : 0; }
 
 void end_snapshot(int proc) {
   tables_known = 0;
+  gfx_gen++;
   proc_now = proc, proc_dropped = 0;
   if (drop) {
     drop = 0;
@@ -193,6 +200,7 @@ static const u32 chcr[] = {MX_DMA_VIF0, MX_DMA_VIF1, MX_DMA_GIF, MX_DMA_FROMIPU,
 
 static void units_off(void) {
   int was = mx_di();
+  gfx_gen++;
   for (u32 i = 0; i < sizeof chcr / sizeof chcr[0]; i++)
     MX_R32(chcr[i]) = 0;
   /* their end flags cleared (writing 1 clears; the masks are the BIOS's,
@@ -357,6 +365,7 @@ static void unpark_state(void) {
     threads_before[i] = parked.threads_before[i], semas_before[i] = parked.semas_before[i];
   tables = parked.tables;
   tables_known = 1;
+  gfx_gen++;
   proc_now = parked.proc, proc_dropped = parked.dropped;
 }
 void end_unpark_beside(void) {

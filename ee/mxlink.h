@@ -413,6 +413,7 @@ int mxlink_crash(struct mx_crash *c);
 struct mx_proc_info;
 struct mx_msg;
 int end_proc_front(void);
+u32 end_gfx_gen(void);
 int end_proc_parked(void);
 int kproc_list(struct mx_proc_info *p, int max);
 int kproc_self(void);
