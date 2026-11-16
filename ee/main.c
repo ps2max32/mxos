@@ -470,6 +470,16 @@ int kproc_shell(void) {
     return 0;
   return me == end_proc_front() ? exec_in_shell() : exec_shell_parked() == me;
 }
+/* Kernel version 33 (mx OS plan step 5a): the graphics are the process in
+   front's. The frame code of a process beside it waits here, asleep, until
+   its process is in front (the one in front ended, or mx_proc_front or the
+   home button brought it there). A paused process's threads are held, so
+   only one beside comes here. */
+void kproc_front_wait(void) {
+  int me = ksched_active() ? ksched_thread_proc(mx_bios_get_thread_id()) : 0;
+  while (me > 0 && end_proc_front() > 0 && me != end_proc_front())
+    mx_sleep_us(20000);
+}
 /* step 4d: the home button in process from (home.c, in its thread): the
    shell in front, told by an event (MX_EVENT_HOME) */
 int kproc_front_home(int shell, int from) {

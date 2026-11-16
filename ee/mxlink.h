@@ -89,6 +89,7 @@ void home_crtc_seen(const struct mx_crtc *c);
 void home_video_again(void);
 void home_hold(void);
 int kproc_shell(void);
+void kproc_front_wait(void);
 /* kpic.c: the picture of the program paused at the home button */
 struct mx_picture;
 void kpic_set(const struct mx_picture *p, u32 phys);
