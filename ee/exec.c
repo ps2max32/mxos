@@ -362,10 +362,15 @@ static void kvm_shutdown(void) {
 
 /* mx OS plan 4e: the VM at the kernel's boot, after the IOP is up (its
    swap file; the IOP modules were read to the programs' memory, free now).
-   The frames are all memory from 1 MiB up to the kernel; the tables are in
-   the kernel's last 64 KiB (resident.ld: __mx_tables).
+   The frames are all memory up to the kernel: from 1 MiB while the BIOS is
+   used, else (mx OS plan step 4a, part 3) the BIOS's memory too, but the
+   vectors' first page and the frame of the host's commands (cmd.c: mxlink's
+   IOP module writes them at 0xFF800). The tables are in the kernel's last
+   64 KiB (resident.ld: __mx_tables).
    0, or -1: programs are placed as before. */
 int mx__vm_boot(u32 phys_lo, u32 phys_hi, int prio);
+int mx__vm_frame_reserve(u32 phys);
+static u32 frames_lo = LOW;
 void mx__heap_range(void *lo, void *hi);
 extern const char *mx__loader_swap;
 int kvm_boot(void) {
@@ -374,8 +379,11 @@ int kvm_boot(void) {
   extern char __mx_tables[];
   u32 top = MX_KERNEL_HI, tables = (u32)(uintptr_t)__mx_tables;
   mx__heap_range((void *)(uintptr_t)(top - tables), (void *)(uintptr_t)top);
-  if (mx__vm_boot(LOW, MX_KERNEL_LO, 1) < 0)
+  frames_lo = kirq_bios_gone() ? KIRQ_BIOS_LO : LOW;
+  if (mx__vm_boot(frames_lo, MX_KERNEL_LO, 1) < 0)
     return -1;
+  if (frames_lo < LOW && mx__vm_frame_reserve(0x000FF800u) < 0)
+    con_log(CON_RED, "the frame of the host's commands could not be kept out of the VM");
   vm_boot = 1;
   boot_space = mx__vm_space_now();
   return 0; /* its swap file: swap.c */
@@ -423,7 +431,7 @@ int exec_proc_parked(int proc) {
 /* the physical memory of the program that ends (sound_off): all from 1 MiB
    up but the cores of those that wait or run beside it, at the top */
 void exec_end_range(u32 *lo, u32 *hi) {
-  *lo = LOW;
+  *lo = vm_boot ? frames_lo : LOW;
   *hi = npark ? park.core_phys : MX_KERNEL_LO;
 }
 
