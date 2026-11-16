@@ -11,11 +11,11 @@
 
 /* ---- the console (con.c): the status screen ----------------------------- */
 
-/* 640 x 448 (NTSC) or 512 (PAL): characters 7.5 pixels wide (con.c),
-   rows of 18 lines; con_rows rows (24, 28), CON_ROWS at most */
-#define CON_COLS 84
-#define CON_ROWS 28
-extern u32 con_rows;
+/* in the system's video mode (con.c): con_cols columns (84 on 480i, 170 on
+   720p and 1080i), con_rows rows; CON_COLS, CON_ROWS at most */
+#define CON_COLS 172
+#define CON_ROWS 40
+extern u32 con_rows, con_cols;
 
 #define CON_WHITE 0xE0E0E0
 #define CON_GREY 0x808080
@@ -208,6 +208,15 @@ int dev_clock(int set, u8 c[8]);
 void ktime_boot(void);
 s64 ktime_now(void);
 int ktime_set(s64 utc);
+/* kernel version 30: the network (net.c) */
+struct mx_net_status;
+void knet_start(void);
+void knet_setting(void);
+int knet_changed(void);
+void knet_now(void);
+int knet_status(struct mx_net_status *s);
+int knet_addr(u32 *ip, u32 *mask, u32 *gw, int *dhcp);
+void screen_net(void);
 struct vm_space *exec_front_space(void);
 void kproc_side_end(void);
 int kproc_side(void);
@@ -278,6 +287,17 @@ struct mx_crtc;
 void kvideo_init(void);
 int kvideo_crtc_set(const struct mx_crtc *c);
 void kvideo_board_offset(int code, int *dx, int *dy);
+/* kernel version 31: the video settings (<mx/screen.h>) as the kernel uses
+   them; a video.* key changed; the command thread's part; a pad's buttons
+   at the start (L1 L2 R1 R2: the region's SD mode); con.c set up */
+struct mx_screen_conf;
+void kvideo_conf(struct mx_screen_conf *c);
+void kvideo_setting(void);
+void kvideo_now(void);
+void kvideo_pad(u32 buttons);
+void kvideo_shown(void);
+/* main.c: the console set up again and redrawn (a new video mode) */
+void screen_again(void);
 int tlb_core_map(u32 va_end, u32 off);
 /* PCSX2's TLB ignores the ASID (tlb.c): measured at the start, the way round */
 void tlb_emu_asid(u32 asid);

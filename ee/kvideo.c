@@ -23,6 +23,11 @@
 #include <mx/crtc.h>
 #include <mx/hw/regs.h>
 #include <mx/kernel.h>
+#include <mx/pad.h>
+#include <mx/notify.h>
+#include <mx/screen.h>
+#include <mx/setting.h>
+#include <mx/string.h>
 #include <mx/thread.h>
 
 #include "mxlink.h"
@@ -51,6 +56,8 @@
    switch, the encoder at 0xBF801900) */
 enum { BOARD_NONE, BOARD_200, BOARD_220 };
 static int known;
+/* the video settings as the kernel uses them (<mx/screen.h>) */
+static struct mx_screen_conf vconf;
 static u32 seen[3]; /* what kvideo_init read, for kvideo_report */
 
 /* ROM 2.20's variables (its kernel's data is 0x5C0 higher, and it has no
@@ -243,6 +250,10 @@ int kvideo_crtc_set(const struct mx_crtc *c) {
   }
   if (!kirq_is_on() || mx_crtc_regs(c, &r))
     return -1;
+  /* video.out rgb: the 480i and 576i picture as RGB (the BIOS's SetGsVParam
+     0), not YCbCr; the other modes are component only */
+  if (vconf.rgb && (c->kind == MX_CRTC_NTSC || c->kind == MX_CRTC_PAL))
+    r.smode1 &= ~MX_SET(GS_SMODE1_GCONT, 1);
   u64 prst = MX_SET(GS_SMODE1_PRST, 1), sint = MX_SET(GS_SMODE1_SINT, 1);
   u64 s1 = r.smode1 & ~(prst | sint);
   int tv54 = MX_GET(GS_SMODE1_VCKSEL, r.smode1) != 0; /* NTSC, PAL, 480p */
@@ -284,4 +295,100 @@ int kvideo_crtc_set(const struct mx_crtc *c) {
   if (err)
     con_log(CON_RED, "video: the encoder did not answer");
   return 0;
+}
+
+/* ---- the video settings (kernel version 31, <mx/screen.h>) --------------
+
+   video.mode and the rest are the shell's; the kernel reads them for its
+   console (con.c, in that mode), for the RGB or YCbCr picture, and keeps a
+   change of the mode or the output on trial: unless video.confirm says
+   "<mode> <out>" within 15 s, it puts back the confirmed ones (the TV may
+   show nothing in the new mode). The same at the start, so a mode left
+   unconfirmed (the PS2 turned off meanwhile) does not stay. Holding L1 L2
+   R1 R2 on a pad in the first 30 s after the start sets the region's 480i
+   or 576i (a mode the TV does not show). */
+
+#define TRIAL_S 15
+#define FALLBACK_S 30
+#define FALLBACK_KEYS (MX_PAD_L1 | MX_PAD_L2 | MX_PAD_R1 | MX_PAD_R2)
+
+static int vchanged = 1; /* evaluated at the start too */
+static u32 trial_until;  /* kseconds(); 0: no trial */
+static char shown[24];   /* "<mode> <out> <overscan> <aspect>" the console was set up for */
+
+static int kget(const char *key, char *value, u32 size) { return ksetting_get(key, value, size); }
+
+void kvideo_conf(struct mx_screen_conf *c) {
+  mx_screen_conf_from(&vconf, kget);
+  if (c)
+    *c = vconf;
+}
+
+/* settings.c: a video.* key changed */
+void kvideo_setting(void) { vchanged = 1; }
+
+static void now_text(char *t, u32 n, const struct mx_screen_conf *c) {
+  mx_snprintf(t, n, "%s %s", mx_screen_name(c->mode), c->rgb ? "rgb" : "component");
+}
+
+/* the command thread (dev.c's dev_now) */
+void kvideo_now(void) {
+  if (vchanged) {
+    vchanged = 0;
+    kvideo_conf(0);
+    char cur[24], conf[MX_SETTING_VALUE], def[24], look[24];
+    now_text(cur, sizeof cur, &vconf);
+    mx_snprintf(def, sizeof def, "%s component", vconf.pal ? "576i" : "480i");
+    if (ksetting_get("video.confirm", conf, sizeof conf) <= 0)
+      strcpy(conf, def);
+    if (!strcmp(cur, conf))
+      trial_until = 0;
+    else if (!trial_until) {
+      trial_until = kseconds() + TRIAL_S;
+      con_log(CON_YELLOW, "video: %s on trial (%u s), confirmed is %s", cur, TRIAL_S, conf);
+    }
+    /* the console again in the new mode when it is what the TV shows */
+    mx_snprintf(look, sizeof look, "%s %u %u", cur, vconf.full, vconf.wide);
+    if (strcmp(look, shown) && shown[0] && !exec_running())
+      screen_again();
+  }
+  if (trial_until && kseconds() >= trial_until) {
+    trial_until = 0;
+    char conf[MX_SETTING_VALUE], mode[16] = "", out[16] = "component";
+    if (ksetting_get("video.confirm", conf, sizeof conf) > 0) {
+      char *sp = conf;
+      while (*sp && *sp != ' ')
+        sp++;
+      if (*sp)
+        *sp = 0, mx_snprintf(out, sizeof out, "%s", sp + 1);
+      mx_snprintf(mode, sizeof mode, "%s", conf);
+    }
+    if (!mode[0])
+      mx_snprintf(mode, sizeof mode, "%s", vconf.pal ? "576i" : "480i");
+    con_log(CON_YELLOW, "video: not confirmed in %u s, back to %s %s", TRIAL_S, mode, out);
+    ksetting_set("video.mode", mode);
+    ksetting_set("video.out", out);
+    knotify_add(MX_NOTIFY_INFO, 0, 0, "", "Video mode not kept", mode);
+  }
+}
+
+/* pad.c: a program read a pad with these held */
+void kvideo_pad(u32 buttons) {
+  static int done;
+  if (done || (buttons & FALLBACK_KEYS) != FALLBACK_KEYS || kseconds() > FALLBACK_S)
+    return;
+  done = 1;
+  const char *sdm = vconf.pal ? "576i" : "480i";
+  con_log(CON_YELLOW, "video: L1 L2 R1 R2 held at the start: %s", sdm);
+  ksetting_set("video.mode", sdm);
+  ksetting_set("video.confirm", vconf.rgb ? (vconf.pal ? "576i rgb" : "480i rgb")
+                                          : (vconf.pal ? "576i component" : "480i component"));
+  knotify_add(MX_NOTIFY_INFO, 0, 0, "", "Video mode reset", sdm);
+}
+
+/* con.c: what it was set up for */
+void kvideo_shown(void) {
+  char cur[24];
+  now_text(cur, sizeof cur, &vconf);
+  mx_snprintf(shown, sizeof shown, "%s %u %u", cur, vconf.full, vconf.wide);
 }

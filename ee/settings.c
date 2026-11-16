@@ -101,6 +101,10 @@ static void apply(const char *key) {
     pad_settings.swap_ports = (u8)ksetting_on(key);
   else if (!strcmp(key, "pad.swap_xo"))
     pad_settings.swap_xo = (u8)ksetting_on(key);
+  else if (!strncmp(key, "net.", 4))
+    knet_setting();
+  else if (!strncmp(key, "video.", 6))
+    kvideo_setting();
 }
 
 /* the kernel's own (no event while loading: quiet) */

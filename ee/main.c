@@ -1133,16 +1133,41 @@ static int shell_there(void) {
   return 1;
 }
 
-static void screen(void) {
-  con_line(ROW_TITLE, CON_WHITE, "mx kernel %d", MX_KERNEL_VERSION);
+/* the network's line: the stack's address (DHCP's too), before it is
+   known the one mxnet started with */
+void screen_net(void) {
+  u32 a[3];
+  int dhcp;
+  char t[3][16];
+  if (knet_addr(&a[0], &a[1], &a[2], &dhcp)) {
+    for (int i = 0; i < 3; i++)
+      mx_snprintf(t[i], sizeof t[i], "%u.%u.%u.%u", a[i] & 255, a[i] >> 8 & 255, a[i] >> 16 & 255,
+                  a[i] >> 24);
+    con_line(ROW_NET, CON_WHITE, "Net:    %s  mask %s  gw %s%s", t[0], t[1], t[2],
+             dhcp == 2 ? "  (DHCP)" : dhcp == 1 ? "  (DHCP: asking)" : "");
+    con_line(ROW_HELP, CON_GREY, "ps2client -h %s execee host:<elf> [args]", t[0]);
+    return;
+  }
   const char *ip = if_conf, *mask = ip + strlen(ip) + 1, *gw = mask + strlen(mask) + 1;
   con_line(ROW_NET, CON_WHITE, "Net:    %s  mask %s  gw %s", ip, mask, gw);
+  con_line(ROW_HELP, CON_GREY, "ps2client -h %s execee host:<elf> [args]", ip);
+}
+
+static void screen(void);
+/* kvideo.c: a new video mode while the console is what the TV shows */
+void screen_again(void) {
+  con_init();
+  screen();
+}
+
+static void screen(void) {
+  con_line(ROW_TITLE, CON_WHITE, "mx kernel %d", MX_KERNEL_VERSION);
+  screen_net();
   con_line(ROW_HOST, CON_WHITE, "Boot:   %s%s", boot_path, restarts > 1 ? "  (restarted)" : "");
   u32 self_start, self_end;
   exec_self(&self_start, &self_end);
   con_line(ROW_MEM, CON_WHITE, "Memory: kernel %05x-%05x, programs 00100000-%08x",
            self_start, self_end, MX_MAIN_BYTES);
-  con_line(ROW_HELP, CON_GREY, "ps2client -h %s execee host:<elf> [args]", ip);
   if (last_path[0])
     con_line(ROW_LAST, last_status ? CON_RED : CON_WHITE, "Last:   %s, exit status %d", last_path,
              (int)last_status);
@@ -1312,6 +1337,7 @@ static void emu_main(void) {
   }
   iop_last = mx_iop_last_module(); /* iop_kept: the IOP as PCSX2 started it */
   settings_load(""); /* host:settings.dat, a test run's host:*.txt over it */
+  con_init();        /* again: in the settings' video mode (kernel version 31) */
   /* mx OS plan 4e: the VM at the boot, as main's (not with PCSX2's
      recompiler, which raises no TLB misses) */
   if (kvm_boot() < 0)
@@ -1414,6 +1440,7 @@ int main(int argc, char **argv) {
     con_log(CON_YELLOW, "no VM at the boot: programs placed as before");
   dev_start();
   ktime_boot(); /* the clock, through mxio (kernel version 29) */
+  knet_start(); /* the network's state, through mxsock (kernel version 30) */
   kswap_boot();
   /* the tty is up (mxfast): the debug output to ps2client too */
   mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);

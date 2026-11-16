@@ -144,7 +144,7 @@ static void dev_vblank(void) {
   ticks += now - tick_last;
   tick_last = now;
   /* a device's change at once; the controllers twice a second */
-  if (!dev_wake && ((dev_on && devs()->gen != dev_seen) || ++vblanks % 30 == 0)) {
+  if (!dev_wake && ((dev_on && devs()->gen != dev_seen) || knet_changed() || ++vblanks % 30 == 0)) {
     dev_wake = 1;
     cmd_iwake();
   }
@@ -226,6 +226,8 @@ void dev_now(void) {
   dev_wake = 0;
   pad_watch();
   settings_tick();
+  knet_now();
+  kvideo_now();
   if (!dev_on)
     return;
   volatile struct mxio_devs *d = devs();

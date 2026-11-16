@@ -960,6 +960,7 @@ static const struct mxk_services kernel = {
     .pad_gen = kpad_gen,
     .time_now = ktime_now,
     .time_set = ktime_set,
+    .net_status = knet_status,
     .sleep_us = mx_sleep_us,
     .proc_events = kmsg_events,
     .log_read = klog_read,

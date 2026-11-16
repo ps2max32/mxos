@@ -273,6 +273,7 @@ int pad_read(int port, struct mx_pad_state *s, int sticks) {
   if (pad_settings.swap_ports && (unsigned)port <= 1)
     port ^= 1;
   int r = pad_merged(port, s, sticks);
+  kvideo_pad(s->buttons);
   if (home_anywhere())
     s->buttons |= MX_PAD_HOME;
   if (pad_settings.swap_xo)
