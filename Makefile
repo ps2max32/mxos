@@ -63,7 +63,7 @@ CFLAGS += $(if $(MODULE_DIR),-DMODULE_DIR='"$(MODULE_DIR)"')
 CFLAGS += $(if $(KBIOS_GONE),-DKBIOS_GONE=$(KBIOS_GONE))
 
 SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c kirq.c ksched.c kproc.c kmsg.c klog.c kvideo.c \
-       ptab.c dev.c swap.c settings.c time.c net.c
+       ptab.c dev.c swap.c settings.c time.c net.c kpic.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
 MODULES = poweroff mxdev9 mxeth mxnet mxfast ioptrap sio2man mxmc mcserv padman libsd mxsnd \
           mxio mxsock usbd mxpad bdm bdmfs_fatfs usbmass_bd mx4sio_bd mxata

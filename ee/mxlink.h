@@ -89,6 +89,11 @@ void home_crtc_seen(const struct mx_crtc *c);
 void home_video_again(void);
 void home_hold(void);
 int kproc_shell(void);
+/* kpic.c: the picture of the program paused at the home button */
+struct mx_picture;
+void kpic_set(const struct mx_picture *p, u32 phys);
+int kpic_get(struct mx_picture *p);
+int kpic_read(void *buf, u32 bytes);
 u32 home_wanted(void);
 int home_run(u32 page, u32 pages);
 /* the buttons a program gets: the combination taken for the menu */
