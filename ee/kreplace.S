@@ -5,9 +5,8 @@
 # clears what is past each one's file size, writes the data cache back and
 # drops the instruction cache, and jumps to the new kernel's entry with
 # ExecPS2's a0 and a1 (argc, argv). Position independent, no stack; the
-# table at KREPLACE_TABLE (kreplace.h): u32 n, u32 entry, then n times
-# {dst, src, filesz, memsz}. Once the BIOS is gone (mx OS plan 2h-5) the
-# kernel starts it itself instead of ExecPS2.
+# table at KREPLACE_TABLE (kreplace.h). Once the BIOS is not used (mx OS plan
+# step 4a) the kernel starts it itself, in kernel mode, instead of ExecPS2.
 
 #include "kreplace.h"
 
@@ -25,10 +24,12 @@ kreplace_tramp:
 	ori $8, $8, (KREPLACE_TABLE & 0xffff)
 	lw $9, 0($8)                # n
 	lw $18, 4($8)               # entry
-	addiu $8, $8, 8
+	lw $19, 8($8)               # ORed into dst: kseg0 in kernel mode
+	addiu $8, $8, 16
 1:	beqz $9, 4f
 	nop
 	lw $10, 0($8)               # dst
+	or $10, $10, $19
 	lw $11, 4($8)               # src
 	lw $12, 8($8)               # filesz
 	lw $13, 12($8)              # memsz
@@ -52,8 +53,8 @@ kreplace_tramp:
 	addiu $9, $9, -1
 
 4:	# the data cache written back and dropped, by index (64 sets of 2
-	# ways; the addresses in kuseg: user mode, maxsdk's cache.c)
-	lui $8, 0x0008
+	# ways; the addresses in kuseg, the kernel's: user mode, maxsdk's cache.c)
+	lui $8, 0x01F0
 	ori $9, $8, 0x1000
 6:	sync.l
 	cache 0x14, 0($8)
@@ -64,7 +65,7 @@ kreplace_tramp:
 	bne $8, $9, 6b
 	nop
 	# the instruction cache dropped (128 sets of 2 ways), the BTAC flushed
-	lui $8, 0x0008
+	lui $8, 0x01F0
 	ori $9, $8, 0x2000
 7:	sync.p
 	cache 0x07, 0($8)

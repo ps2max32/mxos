@@ -28,6 +28,8 @@
 #include "ksched.h"
 #include <mx/setting.h>
 
+#include <mx/loader.h>
+#include "kreplace.h"
 #include "mxlink.h"
 
 /* What survives ExecPS2: .bss is cleared and .data set back (hook.S), so a
@@ -90,6 +92,10 @@ static u32 crash_return KEPT = 0;
 #define MODULE_DIR "mc0:/MXOS/"
 #endif
 static char module_dir[32] KEPT;
+/* the SIF's software registers over a restart, once the BIOS's table is not
+   used (kirq_bios_leave) */
+extern u32 *mx__sif_sysregs_kept;
+static u32 sysregs_kept[32] KEPT;
 static const char *shell_path(void);
 #define MODULE_MEM ((u8 *)0x01000000)
 enum {
@@ -516,7 +522,22 @@ int end_pending(void) { return ending; }
 
 /* start.c: no BIOS thread or heap set-up after the kernel's own restart
    (2h-4e-1) */
-int mx__kernel_kept(void) { return kirq_kept(); }
+int mx__kernel_kept(void) {
+  if (kirq_kept())
+    return 1;
+  /* started by another kernel without the BIOS (kreplace.h): this one's
+     vectors, what that one had read from the BIOS, and its path */
+  struct kreplace_handoff *h = kirq_take_over();
+  if (!h)
+    return 0;
+  extern struct mx_args mx__kernel_args;
+  kvideo_handoff(h, 1);
+  memcpy(sysregs_kept, h->sysregs, sizeof sysregs_kept);
+  h->path[sizeof h->path - 1] = 0;
+  mx__kernel_args.argc = 1;
+  mx__kernel_args.argv[0] = h->path;
+  return 1;
+}
 /* start.c, at the first start: the kernel's vectors before its exception
    handlers are set (they go into its tables), no SetupHeap (2h-4e-2) */
 void mx__kernel_early(void) { kirq_on(); }
@@ -1313,6 +1334,8 @@ static void emu_main(void) {
   restarts = 1;
   /* the kernel's threads, as main gives them */
   kirq_on();
+  if (kirq_bios_gone())
+    mx__sif_sysregs_kept = sysregs_kept;
   mx__sif_dma_take(); /* SIF1 through maxsdk's ring, not the BIOS's */
   kvideo_init();      /* the video modes without SetGsCrt */
   ksched_init();
@@ -1396,6 +1419,8 @@ int main(int argc, char **argv) {
      program is an MXOS one (2h-2) */
   kirq_on();
   KT(0x0000ff, 0x000080);
+  if (kirq_bios_gone())
+    mx__sif_sysregs_kept = sysregs_kept;
   mx__sif_dma_take(); /* SIF1 through maxsdk's ring, not the BIOS's */
   KT(0x00ff00, 0x008000);
   kvideo_init();      /* the video modes without SetGsCrt */
@@ -1434,6 +1459,18 @@ int main(int argc, char **argv) {
     settings_load(module_dir);
     read_conf();
     KT(0xffff00, 0);
+    /* mx OS plan step 4a, part 2: on a console whose video the kernel sets
+       itself, the BIOS is not used from here (elsewhere, PCSX2 too, its
+       SetGsCrt is). make KBIOS_GONE=1: its memory filled too, for the test
+       of what still touches it (2: as without; 3: only the fill) */
+#ifndef KBIOS_GONE
+#define KBIOS_GONE 2
+#endif
+    if (kvideo_known()) {
+      if (KBIOS_GONE != 3)
+        mx__sif_sysregs_kept = sysregs_kept;
+      kirq_bios_leave(KBIOS_GONE);
+    }
     restart();
   }
   con_init();

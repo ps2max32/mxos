@@ -57,6 +57,10 @@ CFLAGS += $(if $(EMU),-DMXLINK_EMU)
 # make MODULE_DIR=mc0:/MXOS/NEW/: the IOP modules (and the shell) from there,
 # to try new ones with the one-shot boot
 CFLAGS += $(if $(MODULE_DIR),-DMODULE_DIR='"$(MODULE_DIR)"')
+# make KBIOS_GONE=1 (a test build, mx OS plan step 4a part 2): the BIOS's
+# memory, which the kernel does not use after its first start, is filled with
+# breaks, for maxsdk's tests/ps2/k62_bios.c
+CFLAGS += $(if $(KBIOS_GONE),-DKBIOS_GONE=$(KBIOS_GONE))
 
 SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c kirq.c ksched.c kproc.c kmsg.c klog.c kvideo.c \
        ptab.c dev.c swap.c settings.c time.c net.c

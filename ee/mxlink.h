@@ -270,6 +270,19 @@ const u32 *ksys_kernel_counts(void);
 int ksys_set(int number, void *handler);
 /* before a program: the BIOS thread's SetupThread arguments none (kirq.c) */
 void kirq_setup_args_clear(void);
+/* mx OS plan step 4a, part 2: the BIOS's memory (but the vectors' 4 KiB) no
+   longer used after the kernel's first start */
+#define KIRQ_BIOS_LO 0x00001000u
+#define KIRQ_BIOS_HI 0x00088000u
+#define KIRQ_BIOS_FILL 0x0000000Du /* break */
+void kirq_bios_leave(int fill);
+int kirq_bios_gone(void);
+u32 kirq_bios_delta(void);
+int kvideo_known(void);
+struct kreplace_handoff;
+void kirq_handoff(u32 at, u32 argc, u32 argv);
+struct kreplace_handoff *kirq_take_over(void);
+void kvideo_handoff(struct kreplace_handoff *h, int take);
 void kirq_counts(u32 *intc, u32 *dmac);
 u32 kirq_bios_count(void);
 void kirq_sif0_off(void);

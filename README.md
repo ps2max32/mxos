@@ -73,6 +73,9 @@ What it adds to ps2link:
 - The BIOS's TLB is written back at every start (`ee/tlb.c`): ExecPS2 leaves
   it as it is, so a killed program's VM entries would stay. The kernel's code,
   from 0x1F00000, is read-only for programs: a wild store there is an exception.
+- On a console whose video it sets itself the kernel does not use the BIOS
+  after its first start (maxsdk's `docs/kernel.md`); `make KBIOS_GONE=1` is a
+  test build that also fills the BIOS's memory with breaks.
 - `ps2client status` says what it is doing (state, program, programs
   returned, last exit status) and which PS2 it is on: its model
   (`SCPH-70004`) and `rom0:ROMVER`, each `unknown` if the PS2 does not say.

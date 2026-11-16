@@ -31,6 +31,7 @@
 #include <mx/thread.h>
 
 #include "mxlink.h"
+#include "kreplace.h"
 
 /* the BIOS's variables (its boot fills them) */
 #define BIOS_GS_VARIANT 0x80022618u /* 0 on the console the path is known for */
@@ -55,10 +56,14 @@
    clock switch, the encoder at 0xBA000000), BOARD_220 ROM 2.20's (no clock
    switch, the encoder at 0xBF801900) */
 enum { BOARD_NONE, BOARD_200, BOARD_220 };
-static int known;
+/* read from the BIOS's variables at the kernel's first start and kept: its
+   memory is not the BIOS's any more after it (mx OS plan step 4a) */
+static int known __attribute__((section(".kept")));
+static int probed __attribute__((section(".kept")));
+int kvideo_known(void) { return known != BOARD_NONE; }
 /* the video settings as the kernel uses them (<mx/screen.h>) */
 static struct mx_screen_conf vconf;
-static u32 seen[3]; /* what kvideo_init read, for kvideo_report */
+static u32 seen[3] __attribute__((section(".kept"))); /* what kvideo_init read, for kvideo_report */
 
 /* ROM 2.20's variables (its kernel's data is 0x5C0 higher, and it has no
    board variable: the encoder's is 4 lower than that), and two instructions
@@ -78,7 +83,7 @@ static u32 seen[3]; /* what kvideo_init read, for kvideo_report */
 #define E2_STAT (E2 + 0x08)  /* write 8 first */
 #define E2_RESET (E2 + 0x18) /* 0, then 1 */
 /* the BIOS has GetGsDxDyOffset: a ROM after 2001-06-08 (ROMVER's date) */
-static int has_dxdy;
+static int has_dxdy __attribute__((section(".kept")));
 /* the BIOS's GetGsDxDyOffset of every mode code it knows (2 to 0x73), asked
    once at the kernel's start and kept (mx OS plan 2h-5: the BIOS's memory,
    which the call reads, becomes the kernel's; its table depends on the GS's
@@ -87,6 +92,21 @@ static int has_dxdy;
 #define DXDY_N 0x72
 static s16 dxdy[DXDY_N][2] __attribute__((section(".kept")));
 static int dxdy_known __attribute__((section(".kept")));
+/* a kernel replaced by another without the BIOS: what was read from it goes
+   along (kreplace.h); take: the new kernel's side */
+void kvideo_handoff(struct kreplace_handoff *h, int take) {
+  if (take) {
+    known = (int)h->video[0], has_dxdy = (int)h->video[1], probed = 1;
+    memcpy(seen, &h->video[2], sizeof seen);
+    memcpy(dxdy, h->dxdy, sizeof dxdy);
+    dxdy_known = (int)h->dxdy_known;
+  } else {
+    h->video[0] = (u32)known, h->video[1] = (u32)has_dxdy;
+    memcpy(&h->video[2], seen, sizeof seen);
+    memcpy(h->dxdy, dxdy, sizeof dxdy);
+    h->dxdy_known = (u32)dxdy_known;
+  }
+}
 #define ROMVER_DATE 0xBFC7FF54u /* YYYYMMDD, in ROMVER (VVVVRTYYYYMMDD) */
 
 void kvideo_init(void) {
@@ -96,6 +116,10 @@ void kvideo_init(void) {
      addresses below are not its: nothing read, the BIOS's SetGsCrt. Such a
      ROM is a later one (an earlier kernel's vectors are not known to
      kirq.c), so it has GetGsDxDyOffset */
+  mx__crtc_set = kvideo_crtc_set;
+  if (probed)
+    return;
+  probed = 1;
   u32 kirq_bios_delta(void);
   int rom200 = kirq_bios_delta() == 0;
   int rom220 = kirq_bios_delta() == 0x5C0 && kpeek32(BIOS220_CODE1) == 0x8C422BD8u &&
@@ -106,7 +130,6 @@ void kvideo_init(void) {
   known = rom200 && variant == 0 && board == 0x32 && enc == 0x1C   ? BOARD_200
           : rom220 && variant == 0 && enc == 0x1C                  ? BOARD_220
                                                                     : BOARD_NONE;
-  mx__crtc_set = kvideo_crtc_set;
   u32 date = 0;
   for (u32 i = 0; i < 8 && rom200; i++)
     date = date * 10 + (((kpeek32((ROMVER_DATE + i) & ~3u) >> ((ROMVER_DATE + i) & 3) * 8) & 0xFF) - '0');
@@ -264,7 +287,8 @@ int kvideo_crtc_set(const struct mx_crtc *c) {
   u32 v = known == BOARD_200 ? kpeek16(CLOCK) : hd_clock ? CLOCK_HD : 0;
   if (!!(v & CLOCK_HD) != hd_clock) {
     kpoke16(CLOCK, hd_clock ? v | CLOCK_HD | CLOCK_ON : (v & ~CLOCK_HD) | CLOCK_ON);
-    kpoke32(BIOS_HD_CLOCK, hd_clock); /* the BIOS's SetGsCrt knows it then */
+    if (!kirq_bios_gone())
+      kpoke32(BIOS_HD_CLOCK, hd_clock); /* the BIOS's SetGsCrt knows it then */
     mx_sleep_us(25000);
     MX_R64(MX_GS_CSR) = MX_BIT(GS_CSR_RESET);
   }

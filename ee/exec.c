@@ -991,6 +991,7 @@ static int exec_replace(int fd, const char *path, const struct ehdr *eh, const s
   tlb_restore();
   volatile u32 *t = (volatile u32 *)(uintptr_t)KREPLACE_TABLE;
   u32 n = 0, stage = KREPLACE_STAGE, bytes = 0;
+  int gone = kirq_bios_gone();
   for (u32 i = 0; i < eh->phnum; i++) {
     const struct phdr *p = &ph[i];
     if (p->type != PT_LOAD || p->memsz == 0)
@@ -1000,16 +1001,40 @@ static int exec_replace(int fd, const char *path, const struct ehdr *eh, const s
     if (p->filesz && (mx_fio_lseek(fd, (s32)p->offset, MX_FIO_SEEK_SET) != (int)p->offset ||
                       mx_fio_read(fd, (void *)(uintptr_t)stage, p->filesz) != (int)p->filesz))
       return fail(fd, path, "cannot read a segment");
-    t[2 + 4 * n] = p->vaddr, t[3 + 4 * n] = stage, t[4 + 4 * n] = p->filesz;
-    t[5 + 4 * n] = p->memsz;
+    t[4 + 4 * n] = p->vaddr, t[5 + 4 * n] = stage, t[6 + 4 * n] = p->filesz;
+    t[7 + 4 * n] = p->memsz;
     stage = (stage + p->filesz + 63) & ~63u;
     bytes += p->memsz;
     n++;
   }
   mx_fio_close(fd);
-  t[0] = n, t[1] = eh->entry;
+  t[0] = n, t[1] = eh->entry, t[2] = gone ? 0x80000000u : 0, t[3] = 0;
   memcpy((void *)(uintptr_t)KREPLACE_AT, kreplace_tramp, (u32)(kreplace_tramp_end - kreplace_tramp));
   con_log(CON_YELLOW, "  a kernel (%u KiB, entry %08x): it replaces this one", bytes >> 10, eh->entry);
+  if (gone) {
+    /* no BIOS, so no ExecPS2 (kreplace.h): the trampoline in kernel mode,
+       and what this kernel had from the BIOS in a block for the new one */
+    extern u32 *mx__sif_sysregs_kept;
+    struct kreplace_handoff *h = (struct kreplace_handoff *)(uintptr_t)KREPLACE_HANDOFF;
+    memset(h, 0, sizeof *h);
+    h->size = sizeof *h;
+    h->bios_delta = kirq_bios_delta();
+    kvideo_handoff(h, 0);
+    if (largs.args.argc > 0 && largs.args.argv[0]) {
+      u32 l = strlen(largs.args.argv[0]);
+      memcpy(h->path, largs.args.argv[0], l < sizeof h->path ? l : sizeof h->path - 1);
+    }
+    kirq_sif0_off();
+    mx_debug_flush();
+    mx_di();
+    h->status = mx_status();
+    mx__sif_sysregs_kept = h->sysregs;
+    mx__sif_dma_give();
+    h->magic = KREPLACE_MAGIC;
+    mx_dcache_flush_all();
+    mx_icache_invalidate_all();
+    kirq_handoff(KREPLACE_AT, 1, (u32)(uintptr_t)h->path);
+  }
   kirq_off();
   mx_debug_flush();
   tlb_writable();

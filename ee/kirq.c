@@ -21,6 +21,7 @@
 #include <mx/sifdma.h>
 
 #include "mxlink.h"
+#include "kreplace.h"
 
 /* The BIOS kernel's data, by its addresses in ROM 2.00 (docs/bios.md). Other
    ROMs have the same kernel with its data elsewhere (ROM 2.20: 0x5C0 higher;
@@ -125,6 +126,14 @@ static u32 k_poke(u32 a, u32 v, u32 op, u32 n) {
       __asm__ volatile("sync.l\n\tcache 0x18, 0(%0)\n\tsync.l" : : "r"(l) : "memory");
     }
     mx_icache_invalidate_all();
+    return n;
+  }
+  if (op == 10) /* kirq_handoff: the trampoline at physical a, in kernel mode; no return */
+    ((void (*)(u32, u32))(uintptr_t)(0x80000000u | a))(v, n);
+  if (op == 9) { /* n words of v from physical a (kirq_bios_leave's test fill) */
+    volatile u32 *m = (volatile u32 *)(uintptr_t)(0x80000000u | a);
+    for (u32 i = 0; i < n; i++)
+      m[i] = v;
     return n;
   }
   if (op == 7)
@@ -430,10 +439,91 @@ const u32 *ksys_watch_end(void) {
   return ksys_counts;
 }
 
+/* mx OS plan step 4a, part 2: the BIOS is not used after the kernel's first
+   start. From here nothing of the kernel's goes on into it: a syscall the
+   kernel has no handler of and an interrupt line that was the BIOS's end in
+   the kernel's crash report, the BIOS's vectors are never put back
+   (kirq_off), and its memory is not read or written (kirq_setup_args_clear,
+   kvideo.c, maxsdk's sifdma.c through mx__sif_sysregs_kept). Kept over the
+   kernel's restarts. With fill (a test build, KBIOS_GONE): its memory but the
+   vectors' 4 KiB filled with break instructions, so that a jump into it is
+   a crash report with its address, and a test finds what was written there
+   (tests/ps2/k62_bios.c). */
+static u32 bios_gone __attribute__((section(".kept")));
+int kirq_bios_gone(void) { return (int)bios_gone; }
+void kirq_bios_leave(int fill) {
+  if (!on || bios_gone)
+    return;
+  int was = mx_di();
+  if (fill != 3) {
+    ksys_orig = kseg0(mx__exception_vector);
+    for (int i = 0; i < 8; i++)
+      if (kvec_irq_table[i] == kseg0(kvec_irq_bios))
+        kvec_irq_table[i] = kseg0(mx__exception_vector);
+    mx_dcache_flush_all(); /* read through kseg0 */
+    bios_gone = 1;
+  }
+  if (fill != 2) {
+    kcall4(KIRQ_BIOS_LO, KIRQ_BIOS_FILL, 9, (KIRQ_BIOS_HI - KIRQ_BIOS_LO) / 4);
+    mx_dcache_flush_all();
+    mx_icache_invalidate_all();
+  }
+  mx_irq_restore(was);
+}
+
+/* A kernel replaced by another without the BIOS (exec.c, kreplace.h): every
+   INTC cause and DMAC channel off, as kirq_keep, and kreplace.S's
+   trampoline at physical at started in kernel mode. No return. */
+void kirq_handoff(u32 at, u32 argc, u32 argv) {
+  mx_di();
+  volatile u32 *i_mask = (volatile u32 *)0x1000F010u, *d_stat = (volatile u32 *)0x1000E010u;
+  *i_mask = *i_mask;
+  *d_stat = *d_stat & 0x03FF0000u;
+  kcall4(at, argc, 10, argv);
+  for (;;)
+    ;
+}
+
+/* The other side: entered in kernel mode by an older kernel's trampoline,
+   with its block. The kernel's tables without the BIOS's (every exception,
+   syscall and interrupt line the kernel has no handler of: its crash
+   report; the start-up sets its handlers as after a restart), its vectors
+   written here (kernel mode: no poke), then user mode, as the old kernel's
+   thread was. The block, or 0: started by the BIOS, or its own restart. */
+struct kreplace_handoff *kirq_take_over(void) {
+  struct kreplace_handoff *h = (struct kreplace_handoff *)(uintptr_t)KREPLACE_HANDOFF;
+  if (((mx_status() >> 3) & 3) != 0)
+    return 0; /* user mode */
+  if (h->magic != KREPLACE_MAGIC || h->size != sizeof *h)
+    return 0;
+  h->magic = 0;
+  u32 exc = kseg0(mx__exception_vector);
+  for (u32 i = 0; i < 16; i++)
+    kvec_exc_table[i] = exc;
+  for (u32 i = 0; i < 8; i++)
+    kvec_irq_table[i] = exc;
+  kvec_irq_table[2] = kseg0(kirq_intc);
+  kvec_irq_table[3] = kseg0(kirq_dmac);
+  kvec_exc_table[8] = kseg0(ksys_entry);
+  ksys_orig = exc;
+  ksys_handlers[POKE_SYSCALL] = (u32)(uintptr_t)k_poke;
+  bios_delta = h->bios_delta, bios_threads_ok = 0, bios_gone = 1;
+  mx_dcache_flush_all();
+  for (int i = 0; i < 3; i++) {
+    u32 bytes;
+    const u32 *code = kvec_code(i, &bytes);
+    k_poke((u32)(uintptr_t)code, vec_at[i], 6, bytes);
+  }
+  kvec_on = 1, ksys_on = 1;
+  mx_dcache_flush_all();
+  __asm__ volatile("mtc0 %0, $12\n\tsync.p" : : "r"(h->status) : "memory");
+  return h;
+}
+
 /* the BIOS's vectors back (its tables were never written): the poke is the
    BIOS's syscall again, as kirq_on's SetSyscall left it */
 void kirq_off(void) {
-  if (!on)
+  if (!on || bios_gone)
     return;
   int was = mx_di();
   if (kvec_on)
@@ -463,7 +553,7 @@ void kirq_off(void) {
 #define BIOS_THREAD_SIZE 0x4Cu
 #define BIOS_THREAD_ARGC 0x24u
 void kirq_setup_args_clear(void) {
-  if (!on || !bios_threads_ok)
+  if (!on || !bios_threads_ok || bios_gone)
     return;
   u32 tid = kcall(BIOS_THREAD_NOW, 0, 0);
   if (tid > 0 && tid < 256)
