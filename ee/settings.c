@@ -400,12 +400,16 @@ void settings_tick(void) {
   }
   len += (u32)mx_snprintf(buf + len, sizeof buf_ - len, "end\n");
   int fd = mx_fio_open(to, MX_FIO_WRONLY | MX_FIO_CREAT | MX_FIO_TRUNC);
+  /* mx_fio_write: 0 when all was written (not the count); the close
+     writes the card's cache back */
   int w = fd < 0 ? -1 : mx_fio_write(fd, buf, len);
-  if (fd >= 0)
-    mx_fio_close(fd);
-  if (w != (int)len) {
-    con_log(CON_RED, "settings: %s could not be written", to);
-    retry_at = kseconds() + 30; /* the card may be out: not every 3 s */
+  if (fd >= 0 && mx_fio_close(fd) < 0)
+    w = -1;
+  if (w < 0) {
+    con_log(CON_RED, "settings: %s could not be written (%d %d)", to, fd, w);
+    /* all of the card driver's files taken (-24, EMFILE): soon again; else the
+       card may be out: not every 3 s */
+    retry_at = kseconds() + (fd == -24 ? 2 : 30);
     return;
   }
   s->file_seq = seq;

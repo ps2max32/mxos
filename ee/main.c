@@ -79,16 +79,17 @@ static u32 crash_return KEPT = 0;
 #define DEFAULT_NETMASK "255.255.255.0"
 #define DEFAULT_GW "192.168.1.0"
 
-/* The IOP modules are files of the memory card (make: $(OUT)/MXOS), in the
-   order they load. They are read to the programs' memory above mxlink's,
-   free whenever the IOP is set up. Another directory (make MODULE_DIR=...)
-   tries new modules: the one-shot boot of an mxlink built so reads them
-   there, and a reset boots the default again. */
+/* The IOP modules are files of the kernel's directory (make: $(OUT)/MXOS), in
+   the order they load: the directory of the path it was started by
+   (argv[0]: mxboot's mc0:/MXOS/MXKERNEL.ELF, mc1:/..., a one-shot's), the
+   settings and the shell there too. For a kernel started from host: (tried
+   from the PC), or without chime.irx there, MODULE_DIR (make
+   MODULE_DIR=...). They are read to the
+   programs' memory above the kernel's, free whenever the IOP is set up. */
 #ifndef MODULE_DIR
 #define MODULE_DIR "mc0:/MXOS/"
 #endif
-/* the shell's path without the setting shell.path (shell_path) */
-#define SHELL_DEFAULT MODULE_DIR "MXSHELL.ELF"
+static char module_dir[32] KEPT;
 static const char *shell_path(void);
 #define MODULE_MEM ((u8 *)0x01000000)
 enum {
@@ -99,7 +100,7 @@ static const char *const module_names[] = {
     /* the network: maxsdk's drivers and stack (libs/maxsdk/docs/iop-drivers.md),
        and mxfast, the fast path for host: files and the console (the tty) */
     "mxdev9", "mxeth", "mxnet", "mxfast",
-    "ioptrap", "ps2link", "sio2man", "mcman", "mcserv", "padman",
+    "ioptrap", "ps2link", "sio2man", "mxmc", "mcserv", "padman",
     /* maxsdk's sound (<mx/snd.h>; iop/sound/mxsnd), on libsd: programs bind
        to it and load nothing */
     "libsd", "mxsnd",
@@ -854,8 +855,8 @@ void mxlink_host_run(void) { no_shell = 1; }
 
 static int module_open(u32 i) {
   char path[48];
-  u32 n = sizeof MODULE_DIR - 1, l = strlen(module_names[i]);
-  memcpy(path, MODULE_DIR, n);
+  u32 n = strlen(module_dir), l = strlen(module_names[i]);
+  memcpy(path, module_dir, n);
   memcpy(path + n, module_names[i], l);
   memcpy(path + n + l, ".irx", 5);
   return mx_fio_open(path, MX_FIO_RDONLY);
@@ -893,7 +894,7 @@ static int read_all(void) {
     }
     if (size <= 0 || mx_fio_lseek(fd, 0, MX_FIO_SEEK_SET) != 0 ||
         mx_fio_read(fd, to, (u32)size) != size) {
-      con_log(CON_RED, "IOP module %s%s.irx: cannot read it", MODULE_DIR, module_names[i]);
+      con_log(CON_RED, "IOP module %s%s.irx: cannot read it", module_dir, module_names[i]);
       if (fd >= 0)
         mx_fio_close(fd);
       return -1;
@@ -929,7 +930,7 @@ static int read_modules(void) {
   if (kept)
     con_log(CON_GREY, "the IOP as it was: reset with the ROM's card drivers");
   if (rom_card() < 0) {
-    con_log(CON_RED, "no IOP modules: cannot read %s", MODULE_DIR);
+    con_log(CON_RED, "no IOP modules: cannot read %s", module_dir);
     return -1;
   }
   return read_all();
@@ -1207,7 +1208,8 @@ static int read_words(const char *path, char *to, u32 max, u32 *len) {
 static char shell_cfg[MX_SETTING_VALUE];
 static const char *shell_path(void) {
   if (ksetting_get("shell.path", shell_cfg, sizeof shell_cfg) <= 0)
-    return SHELL_DEFAULT;
+    mx_snprintf(shell_cfg, sizeof shell_cfg, "%sMXSHELL.ELF",
+                module_dir[0] ? module_dir : MODULE_DIR); /* PCSX2's: none */
   return shell_cfg;
 }
 
@@ -1416,9 +1418,20 @@ int main(int argc, char **argv) {
       n = 0;
     memcpy(boot_path, n ? argv[0] : "", n);
     boot_path[n] = 0;
+    /* the kernel's directory: argv[0]'s up to its last '/' or ':'; not
+       host: (a kernel tried from the PC: its files on the card, not what
+       happens to be in the PC's directory) */
+    while (n && boot_path[n - 1] != '/' && boot_path[n - 1] != ':')
+      n--;
+    if (!n || n >= sizeof module_dir || !strncmp(boot_path, "host", 4))
+      n = 0;
+    memcpy(module_dir, boot_path, n);
+    module_dir[n] = 0;
+    if (!n || !card_ready())
+      strcpy(module_dir, MODULE_DIR);
     /* the settings (kernel version 27) through the loader's IOP, which
-       reads the card */
-    settings_load(MODULE_DIR);
+       reads the kernel's directory */
+    settings_load(module_dir);
     read_conf();
     KT(0xffff00, 0);
     restart();

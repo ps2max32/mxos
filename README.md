@@ -101,9 +101,14 @@ make shell         # mxshell into build/apps/mxos/MXOS
   a PS2 with the PCMCIA DEV9 (SCPH-1xxxx) has none. `mxfast` is the fast path
   for `host:` files and the console: to the ps2client that serves the fast
   path without loss, else by broadcast as ps2sdk's `udptty` sent it.
-  To try new modules: `make OUT=<dir> MODULE_DIR=mc0:/MXOS/NEW/ all`, the
-  modules (and `MXSHELL.ELF`) copied to `mc0:/MXOS/NEW`, that `MXKERNEL.ELF` as
-  the one-shot boot (`MXKERNEL.NEW`): if it fails, a reset boots the default.
+  The kernel reads its modules, its settings and its shell from the directory
+  it was started from (`argv[0]`'s); started from `host:`, or without
+  `chime.irx` there, from `MODULE_DIR`, `mc0:/MXOS/` (`make MODULE_DIR=...`). To try new
+  modules: copy them (and `MXSHELL.ELF`, `MXLINK.ELF` with a `SERVICES.CFG`
+  naming it there) with `MXKERNEL.ELF` to a
+  directory of their own, e.g. `mc0:/MXOS/NEW`, and boot that kernel as the
+  one-shot (`once mc0: mc?:/MXOS/NEW/MXKERNEL.ELF`): if it fails, a reset boots
+  the default. The memory card driver is maxsdk's `mxmc` (16 open files).
 - `mxkernel-high.elf`: the same at 0x1E00000, to try a build without
   installing it: from a running loader, `ps2client execee
   host:mxkernel-high.elf` (its IOP reset ends the connection: expected), then
