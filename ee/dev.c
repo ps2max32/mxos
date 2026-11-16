@@ -175,6 +175,24 @@ void dev_start(void) {
 
 int dev_pending(void) { return dev_wake; }
 
+/* kernel version 29: the PS2's clock through mxio (MXIO_CLOCK, cdvdman's
+   sceCdReadClock / sceCdWriteClock): its 8 bytes (BCD, Japan's time) into
+   or from c; cdvdman's result (1: done), or < 0 */
+int dev_clock(int set, u8 c[8]) {
+  if (!io_rpc.server)
+    return -1;
+  volatile u32 *in = MX_UNCACHED(area.in), *out = MX_UNCACHED(area.out);
+  u32 w[2];
+  memcpy(w, c, 8);
+  in[0] = w[0], in[1] = w[1], in[2] = in[3] = 0;
+  out[0] = (u32)-1;
+  if (mx_sif_call(&io_rpc, set ? MXIO_CLOCK_SET : MXIO_CLOCK, (void *)in, 16, (void *)out, 16) < 0)
+    return -1;
+  w[0] = out[1], w[1] = out[2];
+  memcpy(c, w, 8);
+  return (int)out[0];
+}
+
 static const char *kind_name(u32 kind) {
   switch (kind) {
   case MX_DEV_MC:

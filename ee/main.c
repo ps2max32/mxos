@@ -348,6 +348,7 @@ static void restart(void) {
 
 void mxlink_restart(void) {
   exec_kill();
+  ptab_end_all(-1);
   iop_last = 0; /* ps2link.irx gave up host: for this reset: never kept */
   no_shell = 0;
   service_off = 0;
@@ -1133,7 +1134,7 @@ static int shell_there(void) {
 }
 
 static void screen(void) {
-  con_line(ROW_TITLE, CON_WHITE, "mx kernel %s", MXLINK_VERSION);
+  con_line(ROW_TITLE, CON_WHITE, "mx kernel %d", MX_KERNEL_VERSION);
   const char *ip = if_conf, *mask = ip + strlen(ip) + 1, *gw = mask + strlen(mask) + 1;
   con_line(ROW_NET, CON_WHITE, "Net:    %s  mask %s  gw %s", ip, mask, gw);
   con_line(ROW_HOST, CON_WHITE, "Boot:   %s%s", boot_path, restarts > 1 ? "  (restarted)" : "");
@@ -1412,6 +1413,7 @@ int main(int argc, char **argv) {
   if (kvm_boot() < 0)
     con_log(CON_YELLOW, "no VM at the boot: programs placed as before");
   dev_start();
+  ktime_boot(); /* the clock, through mxio (kernel version 29) */
   kswap_boot();
   /* the tty is up (mxfast): the debug output to ps2client too */
   mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
@@ -1457,7 +1459,7 @@ static void after_program(void) {
     con_log(CON_RED, "the shell %s crashed: not started again until a reset", shell_path());
     no_shell = 1;
   }
-  con_log(CON_GREEN, "mx kernel %s ready", MXLINK_VERSION);
+  con_log(CON_GREEN, "mx kernel %d ready", MX_KERNEL_VERSION);
   if (launch_argc) {
     int argc = launch_argc;
     launch_argc = 0;

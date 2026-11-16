@@ -8,7 +8,6 @@
 #include <mx/debug.h>
 #include <mx/types.h>
 
-#define MXLINK_VERSION "0.1"
 
 /* ---- the console (con.c): the status screen ----------------------------- */
 
@@ -204,6 +203,11 @@ int kpad_pair_state(struct mx_pad_pairing *p);
 int kpad_paired(struct mx_pad_paired *p, int max);
 int kpad_forget(u32 id);
 u32 kpad_gen(void);
+/* kernel version 29: the time (time.c), the clock through mxio (dev.c) */
+int dev_clock(int set, u8 c[8]);
+void ktime_boot(void);
+s64 ktime_now(void);
+int ktime_set(s64 utc);
 struct vm_space *exec_front_space(void);
 void kproc_side_end(void);
 int kproc_side(void);
@@ -322,6 +326,7 @@ void ptab_state(int proc, int state);
 void ptab_service(int proc);
 void ptab_shell(int proc);
 void ptab_end(int proc, int status);
+void ptab_end_all(int status);
 int ptab_status(int proc, int *status);
 int ptab_parent(int proc);
 int ptab_waiting(int proc);

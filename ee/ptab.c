@@ -83,6 +83,15 @@ void ptab_end(int proc, int status) {
     e->state = 0, e->status = status;
 }
 
+/* the host's reset: every process ends (the service and the shell start
+   again with new entries); the table outlives the restart, so a program
+   left in front would block the host link's commands */
+void ptab_end_all(int status) {
+  for (int i = 0; i < PTAB_N; i++)
+    if (tab[i].used && tab[i].state)
+      tab[i].state = 0, tab[i].status = status;
+}
+
 /* its file's name (without the path), "" for none: a notification's source */
 void ptab_name(int proc, char *to, u32 room) {
   struct ptab *e = find(proc);
