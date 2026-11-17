@@ -193,6 +193,13 @@ static int core_place(u32 end, u32 heap) {
       return -1;
     phys = (u32)(uintptr_t)p - MX_PHYS_WIN;
     core_pin = p, core_pin_bytes = run;
+    /* the kernel's, not the caller's space's (mx_proc_spawn runs here in
+       the starting program's call): given back by the kernel alone, at
+       this program's end; as the caller's they went with the caller's end */
+    {
+      void mx__vm_frames_owner(void *p, u32 bytes, u32 space);
+      mx__vm_frames_owner(p, run, 0);
+    }
   } else {
     u32 top = mem_top();
     if (top < LOW + MIN_FRAMES + run)
@@ -323,6 +330,10 @@ static int kvm_init(const struct mx_vm_config *c) {
   mx__vm_space_limit(s, c->frames); /* its frames: at most what it asks for */
   mx__vm_space_switch(s);
   front_space = s;
+  {
+    u32 mx__vm_space_id(const struct vm_space *s);
+    ptab_space(ksched_thread_proc(mx_bios_get_thread_id()), mx__vm_space_id(s));
+  }
   /* its swap file, if the VM has none yet (the one that turned it on) */
   if (!vm_boot && mx__vm_swap_open(c->swap) < 0) {
     kvm_front_gone();
@@ -981,6 +992,7 @@ static const struct mxk_services kernel = {
     .gfx_gen = end_gfx_gen,
     .vm_refill_hist = mx__vm_refill_hist,
     .vm_map_file_flags = mx__vm_map_file_flags,
+    .proc_memory = ptab_memory,
     .sleep_us = mx_sleep_us,
     .proc_events = kmsg_events,
     .log_read = klog_read,

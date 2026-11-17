@@ -667,6 +667,16 @@ void hang_log(void) {
     struct mx_vm_stats v;
     mx_vm_stats(&v);
     con_log(CON_GREY, "VM pool: %u frames, %u free, %u pinned", v.frames, v.free_frames, v.pinned_frames);
+    /* who holds them (mx OS plan step 6): the kernel, then each process */
+    static struct mx_proc_mem pm[9];
+    int n = ptab_memory(pm, 9);
+    for (int i = 0; i < n && i < 9; i++) {
+      char name[24] = "the kernel";
+      if (pm[i].id)
+        ptab_name(pm[i].id, name, sizeof name);
+      con_log(CON_GREY, "  %s: core %u pinned %u paged %u frames%s", name, pm[i].core, pm[i].pinned,
+              pm[i].paged, !pm[i].id ? "" : pm[i].state == MX_PROC_FRONT ? "" : "  (not in front)");
+    }
   }
   {
     extern u32 ksched_dbg_wait[6];

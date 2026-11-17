@@ -370,6 +370,9 @@ int ptab_status(int proc, int *status);
 int ptab_parent(int proc);
 int ptab_waiting(int proc);
 int ptab_list(struct mx_proc_info *p, int max);
+struct mx_proc_mem;
+void ptab_space(int proc, u32 space);
+int ptab_memory(struct mx_proc_mem *m, int max);
 /* step 4c: a process beside ends alone */
 int exec_side_ended(int proc);
 void end_side_off(int proc);

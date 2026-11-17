@@ -6,8 +6,10 @@
    state are kept (exec.c's park slots, kproc.c's sides) are not here yet:
    later parts of step 4 move them into the entries. */
 
+#include <mx/cpu.h>
 #include <mx/proc.h>
 #include <mx/string.h>
+#include <mx/vm.h>
 
 #include "mxlink.h"
 
@@ -20,6 +22,7 @@ struct ptab {
   int proc, parent, status;
   u32 seq; /* the order of starts: the oldest ended entry is used again first */
   u32 core_lo, core_hi;
+  u32 space; /* its VM's address space (vm.c's number), 0: none of its own */
   char name[48];
 };
 static struct ptab tab[PTAB_N] KEPT;
@@ -61,6 +64,54 @@ void ptab_core(int proc, u32 lo, u32 hi) {
   if (e)
     e->core_lo = lo, e->core_hi = hi;
 }
+void ptab_space(int proc, u32 space) {
+  struct ptab *e = find(proc);
+  if (e)
+    e->space = space;
+}
+
+/* <mx/proc.h>'s mx_proc_memory (kernel version 37): the kernel first, then
+   the processes as ptab_list. */
+void mx__vm_frames_of(u32 space, const u32 *skip, u32 nskip, u32 *pinned, u32 *paged);
+int ptab_memory(struct mx_proc_mem *m, int max) {
+  static struct mx_proc_info info[PTAB_N];
+  static u32 cores[2 * PTAB_N];
+  int np = ptab_list(info, PTAB_N), n = 0;
+  if (np > PTAB_N)
+    np = PTAB_N;
+  u32 ncores = 0;
+  for (int i = 0; i < np; i++) {
+    struct ptab *e = find(info[i].id);
+    if (e && e->core_hi > e->core_lo)
+      cores[2 * ncores] = e->core_lo, cores[2 * ncores + 1] = e->core_hi, ncores++;
+  }
+  struct mx_vm_stats v;
+  mx_vm_stats(&v);
+  u32 others = 0, kp = 0, kg = 0;
+  if (max > 0) {
+    memset(&m[0], 0, sizeof m[0]);
+    m[0].core = (MX_KERNEL_HI - MX_KERNEL_LO) / MX_VM_PAGE;
+    mx__vm_frames_of(0, cores, ncores, &kp, &kg);
+    m[0].paged = kg;
+    n = 1;
+  }
+  for (int i = 0; i < np; i++) {
+    struct ptab *e = find(info[i].id);
+    u32 core = e ? (e->core_hi - e->core_lo) / MX_VM_PAGE : 0, pinned = 0, paged = 0;
+    if (e && e->space)
+      mx__vm_frames_of(e->space, cores, ncores, &pinned, &paged);
+    others += core + pinned;
+    if (n < max) {
+      m[n].id = info[i].id, m[n].state = info[i].state, m[n].flags = info[i].flags;
+      m[n].core = core, m[n].pinned = pinned, m[n].paged = paged;
+      n++;
+    }
+  }
+  if (max > 0)
+    m[0].pinned = v.pinned_frames > others ? v.pinned_frames - others : 0;
+  return np + 1;
+}
+
 void ptab_state(int proc, int state) {
   struct ptab *e = find(proc);
   if (e && e->state)
