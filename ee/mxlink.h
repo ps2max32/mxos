@@ -360,7 +360,9 @@ int exec_park_done(void);
 volatile int *exec_park_done_flag(void);
 /* ptab.c: the table of processes (mx OS plan, step 4a) */
 struct mx_proc_info;
-void ptab_start(int proc, int parent, const char *path);
+void ptab_start(int proc, int parent, const char *path, const char *cwd);
+const char *ptab_cwd(int proc);
+void ptab_cwd_set(int proc, const char *dir);
 void ptab_core(int proc, u32 lo, u32 fast, u32 hi);
 void ptab_state(int proc, int state);
 void ptab_service(int proc);
@@ -423,6 +425,10 @@ int kproc_list(struct mx_proc_info *p, int max);
 int kproc_self(void);
 void exec_end_range(u32 *lo, u32 *hi);
 int kproc_spawn(int argc, const char *args, u32 args_len, const char *swap);
+int kproc_spawn_in(const char *dir, int argc, const char *args, u32 args_len, const char *swap);
+/* the working directory of the next program exec_elf starts ("" or 0: its
+   ELF's) */
+void exec_dir(const char *dir);
 int kproc_wait(int id, int *status, int nohang);
 int kproc_kill(int id, int status);
 void exec_park_wait_set(void);

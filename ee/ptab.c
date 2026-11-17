@@ -6,11 +6,14 @@
    state are kept (exec.c's park slots, kproc.c's sides) are not here yet:
    later parts of step 4 move them into the entries. */
 
+#include <mx/bios.h>
 #include <mx/cpu.h>
 #include <mx/proc.h>
+#include <mx/sif.h>
 #include <mx/string.h>
 #include <mx/vm.h>
 
+#include "ksched.h"
 #include "mxlink.h"
 
 #define KEPT __attribute__((section(".kept")))
@@ -25,6 +28,7 @@ struct ptab {
   u32 fast_lo; /* its core's fast part: fast_lo to core_hi */
   u32 space; /* its VM's address space (vm.c's number), 0: none of its own */
   char name[48];
+  char cwd[MX_FIO_CWD_MAX]; /* its working directory (kernel version 40) */
 };
 static struct ptab tab[PTAB_N] KEPT;
 static u32 seq KEPT;
@@ -36,9 +40,15 @@ static struct ptab *find(int proc) {
   return 0;
 }
 
+/* the working directory of proc 0 (a program before the kernel's threads)
+   and of the kernel's own threads */
+static char cwd0[MX_FIO_CWD_MAX];
+
 /* a program's start: its process (1-255), the one that started it (0: the
-   kernel or the host), its path */
-void ptab_start(int proc, int parent, const char *path) {
+   kernel or the host), its path, its working directory */
+void ptab_start(int proc, int parent, const char *path, const char *cwd) {
+  if (proc == 0)
+    memcpy(cwd0, cwd, MX_FIO_CWD_MAX);
   if (proc <= 0)
     return;
   struct ptab *e = find(proc); /* a number used again (after a restart) */
@@ -58,7 +68,27 @@ void ptab_start(int proc, int parent, const char *path) {
   if (n > max)
     path += n - max, n = max; /* its end: the file's name */
   memcpy(e->name, path, n);
+  memcpy(e->cwd, cwd, MX_FIO_CWD_MAX);
 }
+
+/* proc's working directory, "" for none (the kernel's threads: cwd0) */
+static char *cwd_of(int proc) {
+  struct ptab *e = find(proc);
+  return e ? e->cwd : cwd0;
+}
+const char *ptab_cwd(int proc) { return cwd_of(proc); }
+void ptab_cwd_set(int proc, const char *dir) {
+  char *d = cwd_of(proc);
+  u32 n = (u32)strlen(dir);
+  if (n >= MX_FIO_CWD_MAX)
+    return;
+  memcpy(d, dir, n + 1);
+}
+
+/* maxsdk's file server client (src/base/sif.c), in the caller's thread:
+   its process's directory */
+const char *mx__fio_cwd(void) { return cwd_of(ksched_thread_proc(mx_bios_get_thread_id())); }
+void mx__fio_cwd_set(const char *dir) { ptab_cwd_set(ksched_thread_proc(mx_bios_get_thread_id()), dir); }
 
 void ptab_core(int proc, u32 lo, u32 fast, u32 hi) {
   struct ptab *e = find(proc);

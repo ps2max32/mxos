@@ -861,12 +861,23 @@ static void set_args(int argc, const char *args, u32 len) {
 
 static const char *next_swap;
 void exec_swap(const char *swap) { next_swap = swap; }
+/* the working directory of the next start (kernel version 40): a program's
+   start by another (main.c's launch: the dir it gave, else its own); ""
+   for the kernel's own starts and the host's: the ELF's directory */
+static char next_dir[MX_FIO_CWD_MAX];
+void exec_dir(const char *dir) {
+  u32 n = dir ? (u32)strlen(dir) : 0;
+  if (n >= sizeof next_dir)
+    n = 0;
+  memcpy(next_dir, dir, n);
+  next_dir[n] = 0;
+}
 
 void mx__sif_waits(u32 out[4]);
 void mx__exception_vector(void);
 extern u32 mx__text_lo, mx__text_hi;
 extern const char *mx__loader_swap;
-void mx__fio_base(const char *argv0);
+void mx__fio_dir_of(const char *path, char *out);
 
 /* a libmxk program's text for its crash report (mx_exception_init) */
 static const char **program_note;
@@ -1004,6 +1015,9 @@ static const struct mxk_services kernel = {
     .vm_refill_hist = mx__vm_refill_hist,
     .vm_map_file_flags = mx__vm_map_file_flags,
     .proc_memory = ptab_memory,
+    .fio_chdir = mx_fio_chdir,
+    .fio_getcwd = mx_fio_getcwd,
+    .proc_spawn_in = kproc_spawn_in,
     .sleep_us = mx_sleep_us,
     .proc_events = kmsg_events,
     .log_read = klog_read,
@@ -1092,6 +1106,9 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   }
   shell = next_shell;
   next_shell = 0;
+  static char dir[MX_FIO_CWD_MAX];
+  memcpy(dir, next_dir, sizeof dir);
+  next_dir[0] = 0;
   set_args(argc < 1 ? 1 : argc, args, args_len);
   const char *path = largs.args.argv[0];
   if (exec_returns())
@@ -1256,7 +1273,9 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   /* what is there before it: the rest is the program's at its end (end.c) */
   /* on the kernel's threads a process of its own (step 2d-3) */
   int proc = ksched_active() ? ksched_proc_new() : 0;
-  ptab_start(proc, npark ? park.proc : 0, path);
+  if (!dir[0])
+    mx__fio_dir_of(path, dir);
+  ptab_start(proc, npark ? park.proc : 0, path, dir);
   if (shell)
     ptab_shell(proc);
   if (core_moved)
@@ -1293,7 +1312,6 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   largs.kernel = &kernel;
 
   program_note = 0;
-  mx__fio_base(path);
   mx__text_lo = text_lo;
   mx__text_hi = text_hi;
   exec_started(path);

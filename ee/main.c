@@ -56,6 +56,7 @@ static s32 launch_argc KEPT = 0;
 static u32 launch_len KEPT = 0;
 static char launch_args[256] KEPT = {0};
 static char launch_swap[64] KEPT = {0};
+static char launch_dir[MX_FIO_CWD_MAX] KEPT = {0}; /* its working directory (version 40) */
 static s32 launch_cleanup KEPT = 0; /* the program before it ended */
 /* the next return goes to the text screen, not to the shell: after a host's
    program, and after the shell ended itself (it may crash at each start) */
@@ -754,16 +755,54 @@ static int service_start(int argc) {
    PCSX2 host:mxload.txt's; 0: none */
 static u32 default_args(char *to, u32 max, int *argc);
 
-static int launch(int argc, const char *args, u32 args_len, const char *swap, int beside) {
+int mx__fio_join(const char *dir, const char *path, char *out, u32 room);
+
+/* in the caller's thread: path in its working directory, in out */
+static int caller_path(const char *path, char *out, u32 room) {
+  return mx__fio_join(ptab_cwd(ksched_thread_proc(mx_bios_get_thread_id())), path, out, room);
+}
+
+static int launch(int argc, const char *args, u32 args_len, const char *swap, int beside,
+                  const char *dir) {
   u32 n = swap ? strlen(swap) : 0;
   if (n >= sizeof launch_swap)
     n = 0;
   memcpy(launch_swap, swap ? swap : "", n);
   launch_swap[n] = 0;
+  /* kernel version 40: its ELF's path in the caller's working directory (as
+     Linux's execve), and its directory: dir in the caller's, else the
+     caller's (a service's start: the ELF's) */
   if (args_len > sizeof launch_args)
     args_len = sizeof launch_args;
-  memcpy(launch_args, args, args_len);
+  u32 n0 = 0;
+  while (n0 < args_len && args[n0])
+    n0++;
+  if (n0 >= args_len || caller_path(args, launch_args, sizeof launch_args) < 0)
+    return -1;
+  u32 p0 = (u32)strlen(launch_args) + 1;
+  if (p0 + args_len - n0 - 1 > sizeof launch_args)
+    return -1;
+  memcpy(launch_args + p0, args + n0 + 1, args_len - n0 - 1);
+  args_len = p0 + args_len - n0 - 1;
   launch_len = args_len;
+  if (dir) {
+    if (caller_path(dir, launch_dir, sizeof launch_dir - 1) < 0)
+      return -1;
+    u32 d = (u32)strlen(launch_dir);
+    if (d && launch_dir[d - 1] != '/' && launch_dir[d - 1] != ':')
+      launch_dir[d] = '/', launch_dir[d + 1] = 0;
+  } else if (exec_service_caller()) {
+    /* a service starts programs for others (the host's, the shell): in
+       their ELF's directory */
+    launch_dir[0] = 0;
+  } else {
+    const char *c = ptab_cwd(ksched_thread_proc(mx_bios_get_thread_id()));
+    u32 d = (u32)strlen(c);
+    memcpy(launch_dir, c, d < sizeof launch_dir ? d + 1 : 1);
+    if (d >= sizeof launch_dir)
+      launch_dir[0] = 0;
+  }
+  exec_dir(launch_dir);
   /* a service beside (kernel version 18): its spawn starts the program in
      front when none runs, and it stays beside */
   if (exec_service_caller()) {
@@ -818,16 +857,20 @@ static int launch(int argc, const char *args, u32 args_len, const char *swap, in
 }
 
 int mxlink_launch(int argc, const char *args, u32 args_len, const char *swap) {
-  return launch(argc, args, args_len, swap, 0);
+  return launch(argc, args, args_len, swap, 0, 0);
 }
 /* step 2e-2: the caller's other threads go on beside the other (kproc.c) */
 int mxlink_launch_beside(int argc, const char *args, u32 args_len, const char *swap) {
-  return launch(argc, args, args_len, swap, 1);
+  return launch(argc, args, args_len, swap, 1, 0);
 }
 /* step 2e-3 (kernel version 14): as launch_beside, the caller back at once
    with the other's process */
 int kproc_spawn(int argc, const char *args, u32 args_len, const char *swap) {
-  return launch(argc, args, args_len, swap, 2);
+  return launch(argc, args, args_len, swap, 2, 0);
+}
+/* kernel version 40: in the directory dir */
+int kproc_spawn_in(const char *dir, int argc, const char *args, u32 args_len, const char *swap) {
+  return launch(argc, args, args_len, swap, 2, dir);
 }
 
 /* proc_service (kernel version 18): the caller, a program with its core at a
@@ -843,6 +886,7 @@ int kproc_service(void) {
   pads_close();
   int argc = 0;
   launch_len = default_args(launch_args, sizeof launch_args, &argc);
+  exec_dir(0); /* the shell: in its ELF's directory */
   if (!argc) {
     status_state(ST_READY, 0); /* none in front: ready for the host */
     return 0;
@@ -1377,6 +1421,7 @@ static void emu_main(void) {
     words = launch_argc, len = launch_len;
     memcpy(args, launch_args, len < sizeof args ? len : sizeof args);
     launch_argc = 0, launch_cleanup = 0;
+    exec_dir(launch_dir);
   }
   if (!words) {
     mx_printf("mxkernel: no host:mxload.txt\n");
@@ -1563,6 +1608,7 @@ static void after_program(void) {
     int argc = launch_argc;
     launch_argc = 0;
     exec_swap(launch_swap[0] ? launch_swap : 0);
+    exec_dir(launch_dir);
     if (launch_shell)
       exec_shell_next();
     launch_shell = 0;
