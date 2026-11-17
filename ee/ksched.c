@@ -14,6 +14,7 @@
 #include <mx/bios.h>
 #include <mx/debug.h>
 #include <mx/cpu.h>
+#include <mx/hw/formats.h>
 #include <mx/string.h>
 
 #include "ksched.h"
@@ -710,6 +711,15 @@ static int k_remove_dmac_handler(int ch, int id) { return remove_handler(1, ch, 
    and dropped: a cause in I_STAT, a channel's end, and on the DMAC line
    stall and MFIFO empty when their masks are on, a bus error. Returns 0:
    nothing for the BIOS. */
+/* the drawing hardware's causes (INTC: GS, the vblank's start and end,
+   VIF0/1, VU0/1, IPU, timer 0, which beam racing claims) and channels
+   (DMAC: VIF0/1, GIF, from and to the IPU, from and to the scratchpad) */
+static const u32 draw_lines[2] = {
+    1u << MX_INTC_GS | 1u << MX_INTC_VBON | 1u << MX_INTC_VBOF | 1u << MX_INTC_VIF0 |
+        1u << MX_INTC_VIF1 | 1u << MX_INTC_VU0 | 1u << MX_INTC_VU1 | 1u << MX_INTC_IPU |
+        1u << MX_INTC_TIM0,
+    1u << MX_DMAC_VIF0 | 1u << MX_DMAC_VIF1 | 1u << MX_DMAC_GIF | 1u << MX_DMAC_FROMIPU |
+        1u << MX_DMAC_TOIPU | 1u << MX_DMAC_FROMSPR | 1u << MX_DMAC_TOSPR};
 #define D_STAT_SIM (1u << 29)
 #define D_STAT_MEIM (1u << 30)
 u32 ksched_dispatch(int line, u32 epc) {
@@ -746,6 +756,12 @@ u32 ksched_dispatch(int line, u32 epc) {
       for (int k = 0; k < norder; k++) {
         int i = order[k];
         if (!handler[i].fn || handler[i].line != line || handler[i].n != n)
+          continue;
+        /* mx OS plan step 6, part 4: the drawing hardware is the process
+           in front's; another process's handler of it is not called (the
+           shell beside a game got the game's DMA ends) */
+        if (handler[i].proc && handler[i].proc != (u32)end_proc_front() &&
+            (draw_lines[line] >> n & 1))
           continue;
         int sw = kproc_handler_enter(handler[i].proc);
         if (sw < 0)

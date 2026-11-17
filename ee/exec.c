@@ -654,6 +654,11 @@ void exec_unpark(int status) {
   core_pin = park.core_pin, core_pin_bytes = park.core_pin_bytes;
   if (park.vu_kept) /* paused by another's mx_proc_front (step 4d) */
     kproc_vu_load(park.side_rec);
+  /* its video mode and display, which the one that ended may have changed
+     (its state above is this one's again: what it last set): a parent in
+     1080i got its child's 480i back, and its beam racing's strip lines
+     never came (k74_hireslost) */
+  home_video_again();
   if (!park.beside)
     end_unpark();
   else
