@@ -131,13 +131,15 @@ static u32 core_slots; /* the TLB entries of its core (tlb_core_map) */
 
 /* A libmxk program's notes (maxsdk's src/base/kstubs.c, <mx/loader.h>'s
    MX_CORE_HEAP): where its mx__core_off is, if it was built for a kernel of
-   version 9 or later, and the core heap it asks for (0: none). */
-static u32 *mxk_note(int fd, const struct phdr *ph, u32 n, u32 *heap, u32 *version) {
+   version 9 or later, the core heap it asks for (0: none), and where its
+   core's fast part starts (version 38; 0: none, all of it the interrupt
+   part). */
+static u32 *mxk_note(int fd, const struct phdr *ph, u32 n, u32 *heap, u32 *version, u32 *fast) {
   u32 *at = 0;
-  *heap = *version = 0;
+  *heap = *version = *fast = 0;
   for (u32 i = 0; i < n; i++) {
     const struct phdr *p = &ph[i];
-    u32 w[16];
+    u32 w[32];
     if (p->type != PT_NOTE || p->filesz < 16 || p->filesz > sizeof w ||
         mx_fio_lseek(fd, (s32)p->offset, MX_FIO_SEEK_SET) != (int)p->offset ||
         mx_fio_read(fd, w, p->filesz) != (int)p->filesz)
@@ -156,6 +158,8 @@ static u32 *mxk_note(int fd, const struct phdr *ph, u32 n, u32 *heap, u32 *versi
         }
         else if (w[k + 2] == MXK_NOTE_HEAP && w[k + 1] == 4)
           *heap = d[0];
+        else if (w[k + 2] == MXK_NOTE_FAST && w[k + 1] == 4)
+          *fast = d[0];
       }
       k += 4 + dw;
     }
@@ -1163,10 +1167,10 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     return fail(fd, path, "a loader (below 1 MiB): not an MXOS program");
   /* step 2b: a libmxk program of version 9 with VM, its core at a physical
      run of its own (core_place), from here, so that the load goes there */
-  u32 *core_off_at = 0, heap = 0, version = 0;
+  u32 *core_off_at = 0, heap = 0, version = 0, fast = 0;
   core_moved = 0;
   core_vm = vm;
-  core_off_at = mxk_note(fd, ph, eh.phnum, &heap, &version);
+  core_off_at = mxk_note(fd, ph, eh.phnum, &heap, &version, &fast);
   if (version < 10)
     return fail(fd, path, "not an MXOS program (libmxk): a standalone ELF is started by mxboot or a "
                           "legacy loader");
@@ -1224,10 +1228,15 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     bytes += p->memsz;
   }
   mx_fio_close(fd);
+  /* its core's two parts (mx OS plan step 6): the fast part from a 32 KiB
+     border inside the core, the core heap with it */
+  if (fast < LOW || fast > core_end || (fast & (MX_VM_PAGE - 1)))
+    fast = core_end;
   if (core_off_at) {
     *core_off_at = mx__core_off;
-    con_log(CON_GREY, "  its core at physical %08x-%08x, ASID %u", LOW + mx__core_off,
-            core_end + mx__core_off, mx__asid);
+    con_log(CON_GREY, "  its core at physical %08x-%08x, ASID %u: interrupt part %u KiB, fast part %u KiB",
+            LOW + mx__core_off, core_end + mx__core_off, mx__asid, (fast - LOW) >> 10,
+            (core_end - fast) >> 10);
   }
   if (vm)
     con_log(CON_GREY, "  %u KiB loaded, %d VM segment%s left to the program", bytes >> 10, vm,
@@ -1246,7 +1255,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   if (shell)
     ptab_shell(proc);
   if (core_moved)
-    ptab_core(proc, core_phys, core_phys + (core_end - LOW));
+    ptab_core(proc, core_phys, core_phys + (fast - LOW), core_phys + (core_end - LOW));
   end_snapshot(proc);
   on_libmxk = 0;
   kirq_setup_args_clear(); /* SetupThread: not the block of the program before */

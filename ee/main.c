@@ -674,8 +674,8 @@ void hang_log(void) {
       char name[24] = "the kernel";
       if (pm[i].id)
         ptab_name(pm[i].id, name, sizeof name);
-      con_log(CON_GREY, "  %s: core %u pinned %u paged %u frames%s", name, pm[i].core, pm[i].pinned,
-              pm[i].paged, !pm[i].id ? "" : pm[i].state == MX_PROC_FRONT ? "" : "  (not in front)");
+      con_log(CON_GREY, "  %s: core %u (fast %u) pinned %u paged %u frames%s", name, pm[i].core, pm[i].fast,
+              pm[i].pinned, pm[i].paged, !pm[i].id ? "" : pm[i].state == MX_PROC_FRONT ? "" : "  (not in front)");
     }
   }
   {

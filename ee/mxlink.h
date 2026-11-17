@@ -361,7 +361,7 @@ volatile int *exec_park_done_flag(void);
 /* ptab.c: the table of processes (mx OS plan, step 4a) */
 struct mx_proc_info;
 void ptab_start(int proc, int parent, const char *path);
-void ptab_core(int proc, u32 lo, u32 hi);
+void ptab_core(int proc, u32 lo, u32 fast, u32 hi);
 void ptab_state(int proc, int state);
 void ptab_service(int proc);
 void ptab_shell(int proc);

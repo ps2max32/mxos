@@ -22,6 +22,7 @@ struct ptab {
   int proc, parent, status;
   u32 seq; /* the order of starts: the oldest ended entry is used again first */
   u32 core_lo, core_hi;
+  u32 fast_lo; /* its core's fast part: fast_lo to core_hi */
   u32 space; /* its VM's address space (vm.c's number), 0: none of its own */
   char name[48];
 };
@@ -59,10 +60,10 @@ void ptab_start(int proc, int parent, const char *path) {
   memcpy(e->name, path, n);
 }
 
-void ptab_core(int proc, u32 lo, u32 hi) {
+void ptab_core(int proc, u32 lo, u32 fast, u32 hi) {
   struct ptab *e = find(proc);
   if (e)
-    e->core_lo = lo, e->core_hi = hi;
+    e->core_lo = lo, e->fast_lo = fast, e->core_hi = hi;
 }
 void ptab_space(int proc, u32 space) {
   struct ptab *e = find(proc);
@@ -70,8 +71,8 @@ void ptab_space(int proc, u32 space) {
     e->space = space;
 }
 
-/* <mx/proc.h>'s mx_proc_memory (kernel version 37): the kernel first, then
-   the processes as ptab_list. */
+/* <mx/proc.h>'s mx_proc_memory (kernel version 37; fast: 38): the kernel
+   first, then the processes as ptab_list. */
 void mx__vm_frames_of(u32 space, const u32 *skip, u32 nskip, u32 *pinned, u32 *paged);
 int ptab_memory(struct mx_proc_mem *m, int max) {
   static struct mx_proc_info info[PTAB_N];
@@ -104,6 +105,7 @@ int ptab_memory(struct mx_proc_mem *m, int max) {
     if (n < max) {
       m[n].id = info[i].id, m[n].state = info[i].state, m[n].flags = info[i].flags;
       m[n].core = core, m[n].pinned = pinned, m[n].paged = paged;
+      m[n].fast = e && e->core_hi > e->fast_lo ? (e->core_hi - e->fast_lo) / MX_VM_PAGE : 0;
       n++;
     }
   }
