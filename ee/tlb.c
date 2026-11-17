@@ -181,39 +181,99 @@ void tlb_restore(void) {
 /* A program's core [0x10_0000, va_end) at physical 0x10_0000 + off, under
    the ASID now set (mx__asid; docs/mx-os-plan.md, step 2b): the BIOS's
    global entries of cached main memory from 0x10_0000 (13-20) give way to
-   entries of that ASID, pages of 4 MiB, 1 MiB or 256 KiB as the alignment
-   allows (the main stack is in the core: maxsdk's VM linker scripts). va_end
-   and off: multiples of 1 MiB. The entries it took (after those kept for a
-   process beside, tlb_core_keep), or -1, the TLB unchanged, if more than
-   those 8 are needed or it reaches the entries that stay (41-44). tlb_restore writes the BIOS's back. */
+   entries of that ASID (the main stack is in the core: maxsdk's VM linker
+   scripts). The entries it took (after those kept for a process beside,
+   tlb_core_keep), or -1, the TLB unchanged, if more than those 8 are needed
+   or it reaches the entries that stay (41-44). tlb_restore writes the
+   BIOS's back.
+
+   The cover (mx OS plan step 6, 2026-11-17): pairs of the largest pages
+   that fit, 4 MiB down to 16 KiB, each pair at a multiple of twice its page
+   and each page at a multiple of its size in physical memory too; and for
+   the end, an entry with only its even half (the odd one invalid: an
+   access there is a TLB exception and the kernel's report,
+   tests/ps2/k70_tlbhalf.c). Nothing else may be mapped where an invalid
+   half is (two entries matching one address), so only the last entry is
+   such a one. Before, the core was whole MiBs (pairs of 256 KiB at least):
+   the host link's service took 1 MiB for 350 KiB, the shell 2 for 1.25. */
 #define LO_CORE 0x1Eu /* cached, D, V, not global */
 #define CORE_VA_MAX 0x01A00000u
+static const u32 core_page[5] = {4u << 20, 1u << 20, 256u << 10, 64u << 10, 16u << 10};
+
+/* the entries of [0x10_0000, va_end) at + off: how many (-1: more than max,
+   or it cannot be covered), into pm, hi, lo0, lo1 if not 0; *largest: the
+   largest page used */
+static int core_cover(u32 va_end, u32 off, u32 max, u32 *pm, u32 *hi, u32 *lo0, u32 *lo1, u32 *largest) {
+  u32 n = 0, big = 0;
+  for (u32 v = 0x00100000u; v < va_end; n++) {
+    u32 s = 0;
+    int half = 0;
+    for (u32 k = 0; k < 5 && !s; k++) {
+      u32 t = core_page[k];
+      if (v % (2 * t) || (v + off) % t)
+        continue;
+      if (v + 2 * t <= va_end)
+        s = t;
+      else if (v + t == va_end)
+        s = t, half = 1;
+    }
+    if (!s || n == max)
+      return -1;
+    if (pm) {
+      pm[n] = ((s >> 12) - 1) << 13;
+      hi[n] = v | mx__asid;
+      lo0[n] = (v + off) >> 12 << 6 | LO_CORE;
+      lo1[n] = half ? 0 : (v + s + off) >> 12 << 6 | LO_CORE;
+    }
+    if (s > big)
+      big = s;
+    v += half ? s : 2 * s;
+  }
+  if (largest)
+    *largest = big;
+  return (int)n;
+}
+
+/* The size a core of bytes gets: its end (from 0x10_0000), and what its
+   physical run must be a multiple of. Rounded up to 32 KiB, 64 KiB, 256 KiB
+   or 1 MiB, whichever costs least: what is rounded up is memory no one
+   uses, an entry is one the VM's pages do not have (counted as 96 KiB). */
+u32 tlb_core_plan(u32 bytes, u32 *align) {
+  static const u32 gran[4] = {32u << 10, 64u << 10, 256u << 10, 1u << 20};
+  u32 best = 0, best_cost = ~0u, best_big = 1u << 20;
+  for (u32 g = 0; g < 4; g++) {
+    u32 size = (bytes + gran[g] - 1) & ~(gran[g] - 1), big = 0;
+    /* off as a multiple of 1 MiB that is none of 4 MiB: no 4 MiB pages
+       planned (the run is not asked to be at a multiple of 4 MiB) */
+    int n = core_cover(0x00100000u + size, 1u << 20, TLB_CORE_N, 0, 0, 0, 0, &big);
+    if (n < 0)
+      continue;
+    u32 cost = size - bytes + (u32)n * (96u << 10);
+    if (cost < best_cost)
+      best = size, best_cost = cost, best_big = big;
+  }
+  if (!best) /* cannot be: 1 MiB pieces always cover */
+    best = (bytes + (1u << 20) - 1) & ~((1u << 20) - 1);
+  *align = best_big > (1u << 20) ? 1u << 20 : best_big < (32u << 10) ? 32u << 10 : best_big;
+  return 0x00100000u + best;
+}
 
 int tlb_core_map(u32 va_end, u32 off) {
-  u32 pm[TLB_CORE_N], hi[TLB_CORE_N], lo0[TLB_CORE_N], lo1[TLB_CORE_N], n = 0;
+  u32 pm[TLB_CORE_N], hi[TLB_CORE_N], lo0[TLB_CORE_N], lo1[TLB_CORE_N];
   u32 first = TLB_CORE + core_keep, max = TLB_CORE_N - core_keep;
   if (va_end > CORE_VA_MAX)
     return -1;
-  for (u32 v = 0x00100000u; v < va_end; n++) {
-    u32 s = 4u << 20;
-    while (s > (256u << 10) && (v % (2 * s) || (v + off) % s || v + 2 * s > va_end))
-      s >>= 2;
-    if (n == max || v % (2 * s) || (v + off) % s)
-      return -1;
-    pm[n] = ((s >> 12) - 1) << 13;
-    hi[n] = v | mx__asid;
-    lo0[n] = (v + off) >> 12 << 6 | LO_CORE;
-    lo1[n] = (v + s + off) >> 12 << 6 | LO_CORE;
-    v += 2 * s;
-  }
+  int n = core_cover(va_end, off, max, pm, hi, lo0, lo1, 0);
+  if (n < 0)
+    return -1;
   int was = mx_di();
   /* all of them parked first: no two entries may match one address */
   for (u32 i = 0; i < max; i++)
     tlb_write(first + i, 0, 0xE0000000u + ((TLB_N + first + i) << 13), 0, 0);
-  for (u32 i = 0; i < n; i++)
-    tlb_write(first + i, pm[i], hi[i], lo0[i], lo1[i]);
+  for (int i = 0; i < n; i++)
+    tlb_write(first + (u32)i, pm[i], hi[i], lo0[i], lo1[i]);
   mx_irq_restore(was);
-  return (int)n;
+  return n;
 }
 
 static int over_side(u32 i) {

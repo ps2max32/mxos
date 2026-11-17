@@ -318,6 +318,7 @@ void kvideo_shown(void);
 /* main.c: the console set up again and redrawn (a new video mode) */
 void screen_again(void);
 int tlb_core_map(u32 va_end, u32 off);
+u32 tlb_core_plan(u32 bytes, u32 *align);
 /* PCSX2's TLB ignores the ASID (tlb.c): measured at the start, the way round */
 void tlb_emu_asid(u32 asid);
 extern int tlb_emu;

@@ -182,13 +182,15 @@ static void *core_pin;
 static u32 core_pin_bytes;
 
 static int core_place(u32 end, u32 heap) {
-  u32 va_end = (end + heap + MIB - 1) & ~(MIB - 1), run = va_end - LOW;
+  /* its size and where its run must be: the TLB entries that cover it
+     (tlb.c: no more whole MiBs since 2026-11-17) */
+  u32 align = MIB, va_end = tlb_core_plan(end + heap - LOW, &align), run = va_end - LOW;
   if (va_end > MX_CORE_HI)
     return -1;
   u32 phys;
   if (VM_KEPT) {
     /* a program beside has VM: the core is frames of its pool (phase 3a) */
-    void *p = mx__vm_frames_take_aligned(run, MIB);
+    void *p = mx__vm_frames_take_aligned(run, align);
     if (!p)
       return -1;
     phys = (u32)(uintptr_t)p - MX_PHYS_WIN;
@@ -204,7 +206,7 @@ static int core_place(u32 end, u32 heap) {
     u32 top = mem_top();
     if (top < LOW + MIN_FRAMES + run)
       return -1;
-    phys = top - run;
+    phys = (top - run) & ~(align - 1);
   }
   mx__asid_set(asid_new());
   mx__core_off = phys - LOW;
