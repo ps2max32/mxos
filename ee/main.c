@@ -666,7 +666,9 @@ void hang_log(void) {
   if (mx_vm_active()) {
     struct mx_vm_stats v;
     mx_vm_stats(&v);
-    con_log(CON_GREY, "VM pool: %u frames, %u free, %u pinned", v.frames, v.free_frames, v.pinned_frames);
+    u32 mx__vm_moves(void);
+    con_log(CON_GREY, "VM pool: %u frames, %u free, %u pinned, %u moved", v.frames, v.free_frames,
+            v.pinned_frames, mx__vm_moves());
     /* who holds them (mx OS plan step 6): the kernel, then each process */
     static struct mx_proc_mem pm[9];
     int n = ptab_memory(pm, 9);
