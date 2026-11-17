@@ -371,6 +371,7 @@ static void kvm_shutdown(void) {
 int mx__vm_boot(u32 phys_lo, u32 phys_hi, int prio);
 int mx__vm_frame_reserve(u32 phys);
 int mx__vm_refill_hist(struct mx_vm_hot *out, int max);
+const void *mx__vm_map_file_flags(const char *path, u32 *size, u32 flags);
 static u32 frames_lo = LOW;
 void mx__heap_range(void *lo, void *hi);
 extern const char *mx__loader_swap;
@@ -979,6 +980,7 @@ static const struct mxk_services kernel = {
     .front_wait = kproc_front_wait,
     .gfx_gen = end_gfx_gen,
     .vm_refill_hist = mx__vm_refill_hist,
+    .vm_map_file_flags = mx__vm_map_file_flags,
     .sleep_us = mx_sleep_us,
     .proc_events = kmsg_events,
     .log_read = klog_read,
