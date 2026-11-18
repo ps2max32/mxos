@@ -10,6 +10,8 @@
    is: ps2sdk programs run as under ps2link. */
 
 #include <mx/bios.h>
+#include <mx/hw/formats.h>
+#include <mx/hw/regs.h>
 #include <mx/debug.h>
 #include <mx/iop.h>
 #include <mx/kernel.h>
@@ -1106,6 +1108,12 @@ int exec_elf(int argc, const char *args, u32 args_len) {
   }
   shell = next_shell;
   next_shell = 0;
+  /* started by a program (kernel version 41): the display off until this one
+     sets its own (its mx_display_apply, through gs_display), so the TV does
+     not show the starter's last picture while this one loads and fills GS
+     memory */
+  if (npark && !park.service)
+    MX_R64(MX_GS_PMODE) = MX_SET(GS_PMODE_CRTMD, 1);
   static char dir[MX_FIO_CWD_MAX];
   memcpy(dir, next_dir, sizeof dir);
   next_dir[0] = 0;
