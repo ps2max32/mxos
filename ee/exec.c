@@ -391,6 +391,7 @@ int mx__vm_boot(u32 phys_lo, u32 phys_hi, int prio);
 int mx__vm_frame_reserve(u32 phys);
 int mx__vm_refill_hist(struct mx_vm_hot *out, int max);
 const void *mx__vm_map_file_flags(const char *path, u32 *size, u32 flags);
+int mx__vm_clean(void);
 static u32 frames_lo = LOW;
 void mx__heap_range(void *lo, void *hi);
 extern const char *mx__loader_swap;
@@ -1020,6 +1021,7 @@ static const struct mxk_services kernel = {
     .fio_chdir = mx_fio_chdir,
     .fio_getcwd = mx_fio_getcwd,
     .proc_spawn_in = kproc_spawn_in,
+    .vm_clean = mx__vm_clean,
     .sleep_us = mx_sleep_us,
     .proc_events = kmsg_events,
     .log_read = klog_read,
