@@ -1651,6 +1651,9 @@ void end_kernel_clients(void) {
 void program_ended(void) {
   ending = 0;
   end_cleanup();
+  u32 vu = end_vu_busy();
+  if (vu)
+    con_log(CON_RED, "a VU still runs after the program's end: VPU_STAT %08x", vu);
   /* the VM of a program that waits or runs beside goes on (phase 3a): its
      entries again over the BIOS's, before an interrupt (the VM's vblank)
      reaches its tables */

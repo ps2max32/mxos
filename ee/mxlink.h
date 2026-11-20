@@ -228,6 +228,7 @@ void kproc_side_end(void);
 int kproc_side(void);
 u32 kproc_switches(void);
 void end_cleanup(void);
+u32 end_vu_busy(void); /* VPU_STAT when a VU stayed busy at the end (0: none), once */
 void end_kernel_clients(void); /* main.c */
 void end_reset_state(void);
 void end_counts(u32 *threads_left, u32 *semas_left, u32 *calls_left);

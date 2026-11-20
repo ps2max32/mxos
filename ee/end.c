@@ -198,26 +198,54 @@ static const u32 chcr[] = {MX_DMA_VIF0, MX_DMA_VIF1, MX_DMA_GIF, MX_DMA_FROMIPU,
                            MX_DMA_FROMSPR, MX_DMA_TOSPR};
 #define IPU_CTRL 0x10002010u /* RST: bit 30 */
 
+static u32 vu_busy_after; /* VPU_STAT when a VU stayed busy through the resets (0: none) */
+u32 end_vu_busy(void) {
+  u32 v = vu_busy_after;
+  vu_busy_after = 0;
+  return v;
+}
 static void units_off(void) {
   int was = mx_di();
   gfx_gen++;
+  /* stopped with the DMAC held (EE User's Manual 5.7: a transfer may not
+     stop by STR = 0 alone; a VIF1 chain that went on after it started VU1
+     again after its reset, found running in the next program) */
+  u32 en = MX_R32(MX_D_ENABLER);
+  MX_R32(MX_D_ENABLEW) = en | 0x10000u; /* CPND */
+  (void)MX_R32(MX_DMA_VIF1);
+  (void)MX_R32(MX_D_CTRL);
   for (u32 i = 0; i < sizeof chcr / sizeof chcr[0]; i++)
     MX_R32(chcr[i]) = 0;
+  MX_R32(MX_D_ENABLEW) = en;
   /* their end flags cleared (writing 1 clears; the masks are the BIOS's,
      handlers_off disabled the program's) */
   u32 sif = 1u << MX_DMAC_SIF0 | 1u << MX_DMAC_SIF1 | 1u << MX_DMAC_SIF2;
   MX_R32(MX_D_STAT) = MX_R32(MX_D_STAT) & 0x3FFu & ~sif;
   /* D_CTRL: DMA on, no MFIFO, no stall control */
   MX_R32(MX_D_CTRL) = 1;
-  MX_R32(MX_VIF_VIF0_FBRST) = 1; /* RST */
-  MX_R32(MX_VIF_VIF1_FBRST) = 1;
+  /* VU0 and VU1 reset first (FBRST, vi28: RS0, RS1), then their VIFs, as
+     maxsdk's mx_vu_reset: with the VIFs reset first and a force break with
+     the reset (FB0 RS0 FB1 RS1), VU1 was found still running in the next
+     program (VPU_STAT VBS1; its first VIF1 FLUSH waited for good: a
+     SCPH-90006, kernel 44). Again while a VU is still busy, then said. */
+  for (int i = 0; i < 4; i++) {
+    __asm__ volatile("move $8, %0\n\t.word 0x48c8e000\n\tsync.p" /* ctc2 $8, vi28 */
+                     :
+                     : "r"(0x0202u)
+                     : "$8", "memory");
+    MX_R32(MX_VIF_VIF0_FBRST) = 1; /* RST */
+    MX_R32(MX_VIF_VIF1_FBRST) = 1;
+    MX_R32(MX_VIF_VIF0_ERR) = 6; /* ME0, ME1: mask the MARK and DMA tag errors, as mx_vif_reset */
+    MX_R32(MX_VIF_VIF1_ERR) = 6;
+    u32 st;
+    __asm__ volatile(".word 0x4848e800\n\tmove %0, $8" : "=r"(st) : : "$8"); /* cfc2 $8, vi29 */
+    if (!(st & 0x101u)) /* VBS0, VBS1 */
+      break;
+    if (i == 3)
+      vu_busy_after = st;
+  }
   MX_R32(MX_GIF_CTRL) = 1; /* RST */
   MX_R32(IPU_CTRL) = 1u << 30;
-  /* VU0 and VU1: force break and reset (FBRST, vi28: FB0 RS0, FB1 RS1) */
-  __asm__ volatile("move $8, %0\n\t.word 0x48c8e000\n\tsync.p" /* ctc2 $8, vi28 */
-                   :
-                   : "r"(0x0303u)
-                   : "$8");
   /* timers 0 and 1 stopped, their EQUF and OVFF flags cleared */
   MX_R32(MX_TIMER_T0_MODE) = 0xC00;
   MX_R32(MX_TIMER_T1_MODE) = 0xC00;
