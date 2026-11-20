@@ -289,6 +289,29 @@ static void counts_report(const u32 *n, const char *what, int log) {
   }
 }
 
+#ifdef IRQPROF
+static void irq_prof_report(void) {
+  extern u32 kirq_prof_n, kirq_prof_cycles, kirq_prof_handler, kirq_prof_switch, kirq_prof_switches;
+  u32 n = kirq_prof_n ? kirq_prof_n : 1;
+  mx_printf("mxkernel: IRQPROF %u interrupts: %u cycles each in kirq, of them %u in handlers; %u switches "
+            "(%u cycles each)\n",
+            kirq_prof_n, kirq_prof_cycles / n, kirq_prof_handler / n, kirq_prof_switches,
+            kirq_prof_switches ? kirq_prof_switch / kirq_prof_switches : 0);
+  extern u32 kirq_prof_hn[], kirq_prof_hcyc[], kirq_prof_hsw[];
+  extern int kirq_prof_hinfo(int, int *, int *, int *, void **), kirq_prof_nhandlers(void);
+  for (int i = 1; i <= kirq_prof_nhandlers(); i++) {
+    int line, ch, proc;
+    void *fn;
+    if (!kirq_prof_hinfo(i, &line, &ch, &proc, &fn))
+      continue;
+    mx_printf("mxkernel: IRQPROF handler %d: %s %d proc %d fn %p: %u calls, %u cycles each, %u switched\n", i,
+              line ? "DMAC" : "INTC", ch, proc, fn, kirq_prof_hn[i], kirq_prof_hcyc[i] / kirq_prof_hn[i],
+              kirq_prof_hsw[i]);
+    kirq_prof_hn[i] = kirq_prof_hcyc[i] = kirq_prof_hsw[i] = 0;
+  }
+  kirq_prof_n = kirq_prof_cycles = kirq_prof_handler = kirq_prof_switch = kirq_prof_switches = 0;
+}
+#endif
 static void bios_calls_report(int log) {
   counts_report(ksys_watch_end(), "BIOS syscalls", log);
   /* the calls that waited for the IOP while it ran (any process's), to the host */
@@ -465,6 +488,30 @@ int kproc_front(int id) {
 }
 /* <mx/kernel.h>'s proc_shell (version 25): is the caller the shell (in
    front, or beside the one in front) */
+/* INIT.ELF (kernel version 46): the kernel's directory's, started once at the
+   first start before the service and the shell; its mx_setting_set calls
+   are for this boot only (settings.c). 0 not started yet, 1 running, 2 done */
+static u32 init_state KEPT;
+static char init_path[48] KEPT;
+static int init_there(void) {
+#ifdef MXLINK_EMU
+  return 0;
+#else
+  if (!exec_resident() || !module_dir[0])
+    return 0;
+  mx_snprintf(init_path, sizeof init_path, "%sINIT.ELF", module_dir);
+  int fd = mx_fio_open(init_path, MX_FIO_RDONLY);
+  if (fd < 0)
+    return 0;
+  mx_fio_close(fd);
+  return 1;
+#endif
+}
+int kproc_init(void) {
+  int me = ksched_active() ? ksched_thread_proc(mx_bios_get_thread_id()) : 0;
+  return init_state == 1 && me > 0 && me == end_proc_front();
+}
+
 int kproc_shell(void) {
   int me = ksched_active() ? ksched_thread_proc(mx_bios_get_thread_id()) : 0;
   if (me <= 0)
@@ -1299,6 +1346,30 @@ static const char *shell_path(void) {
                 module_dir[0] ? module_dir : MODULE_DIR); /* PCSX2's: none */
   return shell_cfg;
 }
+/* shell.args (kernel version 46): its words, split at spaces ("..." keeps
+   spaces), each with its 0, into to from *len (at most max): how many */
+static int shell_words(char *to, u32 *len, u32 max) {
+  char v[MX_SETTING_VALUE];
+  int n = ksetting_get("shell.args", v, sizeof v), words = 0;
+  u32 l = *len;
+  for (int i = 0; i < n;) {
+    while (i < n && v[i] == ' ')
+      i++;
+    if (i >= n)
+      break;
+    int q = v[i] == '"';
+    i += q;
+    while (i < n && (q ? v[i] != '"' : v[i] != ' ') && l + 1 < max)
+      to[l++] = v[i++];
+    i += q && i < n;
+    if (l + 1 >= max)
+      break;
+    to[l++] = 0;
+    words++;
+  }
+  *len = l;
+  return words;
+}
 
 /* mx OS plan 3c: the one swap file of MXOS programs: swap.path and
    swap.size (MiB, 64 by default) in the settings (settings.c imports
@@ -1378,7 +1449,7 @@ static u32 default_args(char *to, u32 max, int *argc) {
   if (shell_there() && sn <= max) {
     memcpy(to, sh, sn);
     exec_shell_next();
-    *argc = 1;
+    *argc = 1 + shell_words(to, &sn, max);
     return sn;
   }
 #endif
@@ -1582,6 +1653,9 @@ static void after_program(void) {
     con_log(last_status ? CON_RED : CON_GREEN, "%s returned, exit status %d", last_path,
             (int)last_status);
     bios_calls_report(1);
+#ifdef IRQPROF
+    irq_prof_report();
+#endif
   }
   if (returned && crash_return == returns && crash.note)
     con_log(CON_RED, "%s", crash.note);
@@ -1604,6 +1678,21 @@ static void after_program(void) {
     no_shell = 1;
   }
   con_log(CON_GREEN, "mx kernel %d ready", MX_KERNEL_VERSION);
+  if (init_state == 1 && came_back) {
+    /* INIT.ELF ended: its swap settings now; the service and the shell
+       below read theirs when they start */
+    init_state = 2;
+    kswap_reload();
+  }
+  if (init_state == 0 && !launch_argc) {
+    init_state = 2;
+    if (!no_shell && init_there()) {
+      init_state = 1;
+      con_log(CON_GREY, "init: %s", init_path);
+      cmd_launch(1, init_path, (u32)strlen(init_path) + 1);
+      return;
+    }
+  }
   if (launch_argc) {
     int argc = launch_argc;
     launch_argc = 0;
@@ -1622,6 +1711,8 @@ static void after_program(void) {
     static char args[256];
     u32 n = (u32)strlen(shell_path()) + 1;
     memcpy(args, shell_path(), n);
+    /* shell.args (kernel version 46): its words after the path */
+    int argc = 1 + shell_words(args, &n, sizeof args);
     int m = 0;
     if (came_back && n + strlen(last_path) + 16 < sizeof args) {
       memcpy(args + n, last_path, strlen(last_path) + 1);
@@ -1630,7 +1721,7 @@ static void after_program(void) {
       n += (u32)m + 1;
     }
     exec_shell_next();
-    cmd_launch(m ? 3 : 1, args, n);
+    cmd_launch(argc + (m ? 2 : 0), args, n);
   } else {
     status_state(ST_READY, 0);
   }

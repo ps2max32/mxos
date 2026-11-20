@@ -89,6 +89,7 @@ void home_crtc_seen(const struct mx_crtc *c);
 void home_video_again(void);
 void home_hold(void);
 int kproc_shell(void);
+int kproc_init(void); /* the caller is INIT.ELF, running at the first start (main.c) */
 void kproc_front_wait(void);
 /* kpic.c: the picture of the program paused at the home button */
 struct mx_picture;
@@ -170,6 +171,7 @@ int knotify(u32 kind, int urgent, const char *title, const char *text);
 int knotify_read(u32 after, struct mx_notify *out, int max);
 u32 knotify_seq(void);
 void kswap_boot(void);
+void kswap_reload(void);
 void kswap_device(const char *name, int came);
 int kswap_on(const char *name);
 int kswap_set(const char *path, u32 mib);

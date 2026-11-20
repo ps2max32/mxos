@@ -10,8 +10,9 @@
      handing it to the program. The program stops at its next frame boundary
      (maxsdk's ee/src/gs/home.c) with the GS idle and lends GS memory: then
      home_run runs here, in its thread. A program that does not come within
-     2 s (hires mode, no frame pipeline, an older maxsdk) gets the home
-     button, which ends it, as before.
+     2 s (hires mode, no frame pipeline, an older maxsdk) gets no menu, and
+     the home button does nothing for it (kernel version 46; before, it got
+     the button and libmxk ended it).
    - The menu is drawn by the CPU, 8 lines at a time, and copied into the lent
      memory by IMAGE transfers through the GIF FIFO: only BITBLTBUF, TRXPOS,
      TRXREG and TRXDIR change, which every upload sets anew; no drawing
@@ -101,7 +102,7 @@ void home_gs_mode(const struct mx_video_mode *m) {
 
 static int wanted;      /* the home button seen, the menu asked for */
 static u32 wanted_at;   /* since */
-static int quit_now;    /* the program gets the home button: it ends */
+static int quit_now;    /* no menu for it: the home button is held back from it (kernel 46) */
 static int hold_back;   /* after the menu: no buttons until all are released */
 static int told_no_mode;
 
@@ -115,14 +116,19 @@ u32 home_filter(u32 b) {
     return 0; /* the menu's, not the program's */
   if (exec_in_shell())
     return b; /* the shell's own: its home screen, no menu over it (step 4d) */
-  if (!(b & MX_PAD_HOME) || quit_now)
+  if (!(b & MX_PAD_HOME))
     return b;
+  /* no menu for this program: the home button does nothing (kernel version
+     46; before, the program got it and libmxk ended it: a game without a
+     shell to go back to ended at a press) */
+  if (quit_now)
+    return b & ~MX_PAD_HOME;
   /* only for a program whose maxsdk has the menu (it told the mode) */
   if (!mode_known) {
     if (!told_no_mode)
       mx_printf("mxkernel: home button, but the program told no video mode: no menu\n");
     told_no_mode = 1;
-    return b;
+    return b & ~MX_PAD_HOME;
   }
   if (!wanted) {
     wanted = 1;
@@ -130,7 +136,7 @@ u32 home_filter(u32 b) {
   } else if (mx_count() - wanted_at > GIVE_UP) {
     mx_printf("mxkernel: home button, but no frame boundary within 2 s: no menu\n");
     quit_now = 1; /* it did not come to a frame boundary */
-    return b;
+    return b & ~MX_PAD_HOME;
   }
   return b & ~MX_PAD_HOME;
 }
@@ -320,16 +326,16 @@ int home_run(u32 page, u32 pages) {
     }
   }
   if (page == ~0u || pages < PANEL_PAGES || !mode_known) {
-    mx_printf("mxkernel: no home menu (GS page %x, %u pages, mode %s): the home button ends the program\n",
+    mx_printf("mxkernel: no home menu (GS page %x, %u pages, mode %s): the home button does nothing\n",
               page, pages, mode_known ? "known" : "not told");
-    quit_now = 1; /* no menu: the home button ends it, as before */
+    quit_now = 1; /* no menu: the home button does nothing */
     return 0;
   }
   if (vbl_sema < 0) {
     int sema = mx_sema_create(0, 1);
     if (sema < 0 || mx__irq_vbon_hook(vblank) < 0) {
-      mx_printf("mxkernel: no home menu (no vblank hook): the home button ends the program\n");
-      quit_now = 1; /* no vblanks for the menu: the home button ends it */
+      mx_printf("mxkernel: no home menu (no vblank hook): the home button does nothing\n");
+      quit_now = 1; /* no vblanks for the menu: the home button does nothing */
       return 0;
     }
     vbl_sema = sema;

@@ -606,6 +606,17 @@ static struct {
   u8 proc;      /* the process that added it: run in its space */
 } handler[NHANDLERS + 1];  /* ids 1..NHANDLERS */
 static u32 owned[2];       /* the causes and channels with a handler here */
+#ifdef IRQPROF
+u32 kirq_prof_hn[NHANDLERS + 1], kirq_prof_hcyc[NHANDLERS + 1], kirq_prof_hsw[NHANDLERS + 1];
+/* main.c's report: handler i's line, channel, process and function */
+int kirq_prof_hinfo(int i, int *line, int *n, int *proc, void **fn) {
+  if (i < 1 || i > NHANDLERS || !kirq_prof_hn[i])
+    return 0;
+  *line = handler[i].line, *n = handler[i].n, *proc = handler[i].proc, *fn = (void *)handler[i].fn;
+  return 1;
+}
+int kirq_prof_nhandlers(void) { return NHANDLERS; }
+#endif
 
 static void owned_again(void) {
   u32 o[2] = {0, 0};
@@ -763,16 +774,34 @@ u32 ksched_dispatch(int line, u32 epc) {
         if (handler[i].proc && handler[i].proc != (u32)end_proc_front() &&
             (draw_lines[line] >> n & 1))
           continue;
+#ifdef IRQPROF
+        extern u32 kirq_prof_handler, kirq_prof_switch, kirq_prof_switches;
+        u32 p0 = mx_count();
+#endif
         int sw = kproc_handler_enter(handler[i].proc);
         if (sw < 0)
           continue; /* its process is paused: its memory is not mapped */
+#ifdef IRQPROF
+        u32 p1 = mx_count();
+#endif
         handler_proc = handler[i].proc;
         handler_now = i;
         int r = handler[i].fn(n, handler[i].arg, (void *)(uintptr_t)epc);
         handler_now = 0;
         handler_proc = -1;
+#ifdef IRQPROF
+        u32 p2 = mx_count();
+        kirq_prof_handler += p2 - p1;
+#endif
         if (sw)
           kproc_handler_leave();
+#ifdef IRQPROF
+        if (sw) {
+          kirq_prof_switches++, kirq_prof_switch += (p1 - p0) + (mx_count() - p2);
+          kirq_prof_hsw[i]++;
+        }
+        kirq_prof_hn[i]++, kirq_prof_hcyc[i] += p2 - p1;
+#endif
         if (r == -1)
           break;
       }

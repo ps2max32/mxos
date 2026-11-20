@@ -49,6 +49,7 @@ CFLAGS += $(if $(SHOT),-DMXLINK_SHOT)
 CFLAGS += $(if $(READY_END),-DMXLINK_READY_END)
 # KTRACE=1: the start's steps as screen colours (ee/main.c)
 CFLAGS += $(if $(KTRACE),-DKTRACE)
+CFLAGS += $(if $(IRQPROF),-DIRQPROF)
 # maxsdk's protocols with its IOP modules (mxpad.h)
 CFLAGS += -I$(PS2MAX)/libs/maxsdk/common/include
 # EMU=1 (make emu): the kernel for PCSX2, without network, IOP
@@ -155,6 +156,12 @@ shell: mxlink-iop
 	cp $(OUT)/mxshell/MXOS/* $(OUT)/MXOS/
 	cp $(OUT)/mxlink/mxlink.elf $(OUT)/MXOS/MXLINK.ELF
 	printf '%sMXLINK.ELF\n' '$(or $(MODULE_DIR),mc0:/MXOS/)' > $(OUT)/MXOS/SERVICES.CFG
+
+# INIT.ELF, the boot script's program (init/; kernel version 46): beside the
+# kernel in its directory, with an RC.SH there
+init:
+	$(MAKE) -C init OUT=$(OUT)/init
+.PHONY: init
 
 mxos-fill: $(OUT)/mxos-fill.elf
 $(OUT)/mxos-fill.elf: tools/mxos-fill.c $(MX_LIB) $(MX_CRT0)

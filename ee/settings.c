@@ -40,6 +40,39 @@ static struct {
 
 static volatile typeof(store) *st(void) { return MX_UNCACHED(&store); }
 
+/* Settings for this boot only (kernel version 46): what INIT.ELF set with
+   mx_setting_set (main.c's init). Read before the store, never written to
+   SETTINGS.DAT; the shell's own change of a key drops it here. Kept over
+   the kernel's restart, emptied at its first start. */
+#define NBOOT 24
+static struct {
+  u32 magic, n;
+  struct {
+    char key[MX_SETTING_KEY];
+    char value[MX_SETTING_VALUE];
+  } e[NBOOT];
+} boot __attribute__((section(".padarea"), aligned(64)));
+static volatile typeof(boot) *bt(void) { return MX_UNCACHED(&boot); }
+static int boot_find(const char *key) {
+  volatile typeof(boot) *b = bt();
+  if (b->magic != MAGIC)
+    return -1;
+  for (u32 i = 0; i < b->n && i < NBOOT; i++) {
+    char k[MX_SETTING_KEY];
+    for (u32 c = 0; c < sizeof k; c++)
+      k[c] = b->e[i].key[c];
+    k[sizeof k - 1] = 0;
+    if (!strcmp(k, key))
+      return (int)i;
+  }
+  return -1;
+}
+static void boot_drop(const char *key) {
+  int i = boot_find(key);
+  if (i >= 0)
+    bt()->e[i].key[0] = 0, bt()->e[i].value[0] = 0;
+}
+
 /* not written yet: kept in the store, as the kernel restarts after its
    first start (.bss cleared) */
 static u32 dirty_at; /* seconds of the last change */
@@ -71,6 +104,20 @@ static int find(const char *key) {
 }
 
 int ksetting_get(const char *key, char *value, u32 size) {
+  int b = boot_find(key);
+  if (b >= 0 && bt()->e[b].value[0]) {
+    char v[MX_SETTING_VALUE];
+    for (u32 c = 0; c < sizeof v; c++)
+      v[c] = bt()->e[b].value[c];
+    v[sizeof v - 1] = 0;
+    u32 l = (u32)strlen(v);
+    if (size) {
+      u32 n = l < size - 1 ? l : size - 1;
+      memcpy(value, v, n);
+      value[n] = 0;
+    }
+    return (int)l;
+  }
   int i = find(key);
   if (i < 0 || !size)
     return -1;
@@ -154,12 +201,43 @@ static int set(const char *key, const char *value, int quiet) {
 }
 
 /* a setting of the kernel's (the home menu's pad settings, mx_swap_set) */
-int ksetting_set(const char *key, const char *value) { return set(key, value, 0); }
+int ksetting_set(const char *key, const char *value) {
+  boot_drop(key);
+  return set(key, value, 0);
+}
 
-/* <mx/setting.h>: the shell only */
+/* INIT.ELF's: for this boot only (the boot layer) */
+static int boot_set(const char *key, const char *value) {
+  if (!value)
+    value = "";
+  u32 kl = (u32)strlen(key), vl = (u32)strlen(value);
+  if (!kl || kl >= MX_SETTING_KEY || vl >= MX_SETTING_VALUE)
+    return -1;
+  volatile typeof(boot) *b = bt();
+  if (b->magic != MAGIC)
+    b->magic = MAGIC, b->n = 0;
+  int i = boot_find(key);
+  for (u32 k = 0; i < 0 && k < b->n; k++)
+    if (!b->e[k].key[0])
+      i = (int)k;
+  if (i < 0) {
+    if (b->n >= NBOOT)
+      return -1;
+    i = (int)b->n++;
+  }
+  copy_in(b->e[i].key, key, MX_SETTING_KEY);
+  copy_in(b->e[i].value, value, MX_SETTING_VALUE);
+  apply(key);
+  return 0;
+}
+
+/* <mx/setting.h>: the shell; INIT.ELF for this boot only */
 int ksetting_set_shell(const char *key, const char *value) {
+  if (kproc_init())
+    return boot_set(key, value);
   if (!kproc_shell())
     return -1;
+  boot_drop(key);
   return set(key, value, 0);
 }
 
@@ -348,6 +426,7 @@ void settings_load(const char *kernel_dir) {
   volatile typeof(store) *s = st();
   copy_in(s->dir, strlen(kernel_dir) < sizeof store.dir ? kernel_dir : "", sizeof store.dir);
   s->magic = 0, s->n = 0, s->seq = 0, s->file_seq = 0, s->saved = 0;
+  bt()->magic = 0, bt()->n = 0;
   char pa[96], pb[96];
   path_of(pa, sizeof pa, FILE_A);
   path_of(pb, sizeof pb, FILE_B);

@@ -9,6 +9,7 @@
    memory). mx_swap_set (the shell) chooses another place or none. */
 
 #include <mx/dev.h>
+#include <mx/setting.h>
 #include <mx/sif.h>
 #include <mx/notify.h>
 #include <mx/string.h>
@@ -18,6 +19,7 @@
 static u32 state = MX_SWAP_NONE;
 static int warn_id;  /* the urgent notification while it is: in use, or none */
 static char device[12];
+static char attached_path[MX_SETTING_VALUE]; /* the file attach() opened */
 
 static void device_of(const char *path, char *to, u32 room) {
   u32 n = 0;
@@ -64,6 +66,7 @@ static int attach(void) {
     return -1;
   }
   state = MX_SWAP_ATTACHED;
+  mx_snprintf(attached_path, sizeof attached_path, "%s", path);
   if (made) {
     mx_snprintf(text, sizeof text, "%s (%u MB)", path, bytes >> 20);
     knotify_add(MX_NOTIFY_SWAP, 0, MX_NOTIFY_ACTION_SWAP, "", "Swap file created", text);
@@ -88,6 +91,19 @@ void kswap_boot(void) {
   /* host: and a device mxio does not watch: tried now */
   if (!strncmp(device, "host:", 5) || dev_present(device))
     attach();
+}
+
+/* after INIT.ELF (main.c): its swap.path and swap.size, when they differ
+   from the file in use */
+void kswap_reload(void) {
+  u32 mib = 0;
+  const char *path = kswap_path(&mib);
+  (void)mib;
+  if (state == MX_SWAP_ATTACHED && path && !strcmp(path, attached_path))
+    return;
+  if (state == MX_SWAP_ATTACHED && mx__vm_swap_detach() < 0)
+    return; /* it holds pages already: the next start */
+  kswap_boot();
 }
 
 /* the command thread: a device came or went */

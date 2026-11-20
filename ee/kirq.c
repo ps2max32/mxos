@@ -88,9 +88,23 @@ static volatile u32 counts[2];
 /* kernel mode, interrupts off: line 0 INTC, 1 DMAC, epc the interrupted
    thread's. The kernel's handlers (ksched.c) of the pending causes; returns
    what is left for the BIOS's handler (non-zero: go on into it). */
+#ifdef IRQPROF
+/* make IRQPROF=1 (a test build): cycles of kirq (all of the dispatch) and
+   of the handlers inside it, and the address space switches for them
+   (ksched.c), shown at a program's end (main.c) */
+u32 kirq_prof_n, kirq_prof_cycles, kirq_prof_handler, kirq_prof_switch, kirq_prof_switches;
+#endif
 u32 kirq(int line, u32 epc) {
   counts[line & 1]++;
+#ifdef IRQPROF
+  u32 t0 = mx_count();
+  u32 r = ksched_active() ? ksched_dispatch(line, epc) : 1;
+  kirq_prof_cycles += mx_count() - t0;
+  kirq_prof_n++;
+  return r;
+#else
   return ksched_active() ? ksched_dispatch(line, epc) : 1;
+#endif
 }
 
 void kirq_counts(u32 *intc, u32 *dmac) {
