@@ -222,12 +222,18 @@ static void size_text(char *to, u32 room, u64 bytes) {
    the names known (mxio keeps one that went for one change only: the
    kernel may see the list after that). The first list after the start is
    taken as it is: what is there at the boot is not news. */
+static void dev_list_now(void);
 void dev_now(void) {
   dev_wake = 0;
   pad_watch();
   settings_tick();
   knet_now();
   kvideo_now();
+  dev_list_now();
+  kroot_tick(); /* the system folder (kernel version 47), with the list as it is now */
+}
+
+static void dev_list_now(void) {
   if (!dev_on)
     return;
   volatile struct mxio_devs *d = devs();

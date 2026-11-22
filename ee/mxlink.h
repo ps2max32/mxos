@@ -200,6 +200,8 @@ int ksetting_set_shell(const char *key, const char *value);
 int ksetting_list(u32 after, struct mx_setting *out, int max);
 u32 ksetting_seq(void);
 int ksetting_on(const char *key);
+int ksetting_set_boot(const char *key, const char *value); /* this boot only (kernel version 47) */
+void kroot_tick(void); /* main.c: the system folder (kernel version 47) */
 /* kernel version 28: the controllers for the shell (pad.c) */
 struct mx_pad_info;
 struct mx_pad_pairing;

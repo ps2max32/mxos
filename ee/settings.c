@@ -231,6 +231,10 @@ static int boot_set(const char *key, const char *value) {
   return 0;
 }
 
+/* the kernel's own for this boot only (system.root found without the
+   setting, kernel version 47) */
+int ksetting_set_boot(const char *key, const char *value) { return boot_set(key, value); }
+
 /* <mx/setting.h>: the shell; INIT.ELF for this boot only */
 int ksetting_set_shell(const char *key, const char *value) {
   if (kproc_init())
@@ -407,6 +411,13 @@ static void import(void) {
     set("shell.path", w, 1);
   else
     NONE("shell.path");
+#ifdef MXLINK_EMU
+  /* PCSX2's test runs: the system folder (kernel version 47) */
+  if (words("host:root.txt", w, sizeof w))
+    set("system.root", w, 1);
+  else
+    NONE("system.root");
+#endif
   if (words(
 #ifdef MXLINK_EMU
           "host:services.txt",

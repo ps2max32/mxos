@@ -27,6 +27,7 @@
 
 #include "ksched.h"
 #include <mx/setting.h>
+#include <mx/notify.h>
 
 #include <mx/loader.h>
 #include "kreplace.h"
@@ -98,6 +99,7 @@ static char module_dir[32] KEPT;
 extern u32 *mx__sif_sysregs_kept;
 static u32 sysregs_kept[32] KEPT;
 static const char *shell_path(void);
+static int storage_wanted(const char *module); /* kernel version 47 */
 #define MODULE_MEM ((u8 *)0x01000000)
 enum {
   M_CHIME, M_MXNET = 4, M_MXIO = 14, M_MXSOCK = 15, M_USBD = 16, M_MXPAD = 17, M_MXATA = 22
@@ -1229,10 +1231,12 @@ reset:
   for (u32 i = M_CHIME + 1; i < NMODULES; i++) {
     if (!modules[i].size)
       continue;
-    /* MX4SIO shares slot 2 with a memory card and keeps looking for its SD
-       card there, so mcman no longer finds one: off until a setting turns
-       it on (mx OS plan 4e): storage.mx4sio */
-    if (!strcmp(module_names[i], "mx4sio_bd") && !ksetting_on("storage.mx4sio"))
+    /* the storage drivers as the settings say (kernel version 47):
+       storage.usb and storage.ata on unless "off", storage.mx4sio off
+       unless "on" (MX4SIO shares slot 2 with a memory card and keeps looking
+       for its SD card there, so mcman no longer finds one); the driver of
+       system.root's device always */
+    if (!storage_wanted(module_names[i]))
       continue;
     int stack = i == M_MXNET;
     if (load(i, stack ? if_conf : 0, stack ? if_conf_len : 0) < 0) {
@@ -1256,10 +1260,171 @@ static void stopped(void) {
     mx_bios_sleep_thread();
 }
 
+/* ---- the system folder (kernel version 47) ------------------------------
+
+   system.root names the folder MXOS's files are in (usb0:/PS2MAX,
+   ata0:/PS2MAX, mx4sio0:/PS2MAX, ...): shell.path and swap.path without a
+   device are in it. At the boot, after the IOP's drivers, the kernel waits
+   for it (at most ROOT_WAIT seconds, asleep: the device watch's tick, twice
+   a second, looks again), then attaches the swap file, then starts INIT.ELF,
+   the service and the shell. Without the setting the first device with a
+   PS2MAX folder is it, for this boot (the shell keeps it by setting it).
+   Not found in time: an urgent notification, and the boot goes on (INIT.ELF
+   and the service on the card); once it comes the swap file is attached and
+   the shell started. */
+#define ROOT_WAIT 15
+static void after_program(void);
+enum { ROOT_NOT_YET, ROOT_WAITING, ROOT_READY, ROOT_MISSING };
+static u32 root_state KEPT, root_t0 KEPT;
+static int root_note KEPT;
+static char root_dir[MX_SETTING_VALUE] KEPT; /* the folder, without its last '/'; "" none */
+
+static int has_device(const char *p) {
+  for (; *p && *p != '/'; p++)
+    if (*p == ':')
+      return 1;
+  return 0;
+}
+/* a path of the settings: with its device as it is, else in the system
+   folder; "" when there is none */
+static const char *in_root(const char *rel, char *to, u32 room) {
+  if (has_device(rel))
+    mx_snprintf(to, room, "%s", rel);
+  else if (root_dir[0])
+    mx_snprintf(to, room, "%s/%s", root_dir, rel[0] == '/' ? rel + 1 : rel);
+  else
+    to[0] = 0;
+  return to;
+}
+static int setting_off(const char *key) {
+  char v[8];
+  return ksetting_get(key, v, sizeof v) > 0 && (!strcmp(v, "off") || !strcmp(v, "0") || !strcmp(v, "no"));
+}
+/* the device of system.root ("usb", "ata", "mx4sio"): its driver always */
+static int root_device_is(const char *dev) {
+  char v[MX_SETTING_VALUE];
+  return ksetting_get("system.root", v, sizeof v) > 0 && !strncmp(v, dev, strlen(dev));
+}
+static int storage_wanted(const char *module) {
+  if (!strcmp(module, "usbmass_bd"))
+    return !setting_off("storage.usb") || root_device_is("usb");
+  if (!strcmp(module, "mxata"))
+    return !setting_off("storage.ata") || root_device_is("ata");
+  if (!strcmp(module, "mx4sio_bd"))
+    return ksetting_on("storage.mx4sio") || root_device_is("mx4sio");
+  return 1;
+}
+static int folder_there(const char *dir) {
+  char dev[16];
+  u32 n = 0;
+  while (dir[n] && dir[n] != ':' && n + 2 < sizeof dev)
+    dev[n] = dir[n], n++;
+  if (dir[n] != ':')
+    return 0;
+  dev[n] = ':', dev[n + 1] = 0;
+  if (strcmp(dev, "host:") && !dev_present(dev))
+    return 0;
+  int d = mx_fio_dopen(dir);
+  if (d < 0)
+    return 0;
+  mx_fio_dclose(d);
+  return 1;
+}
+/* 1 the setting's folder is there, 2 one found without the setting, 0 none */
+static int root_find(void) {
+  char v[MX_SETTING_VALUE];
+  if (ksetting_get("system.root", v, sizeof v) > 0) {
+    u32 l = (u32)strlen(v);
+    while (l > 1 && v[l - 1] == '/' && v[l - 2] != ':')
+      v[--l] = 0;
+    if (!folder_there(v))
+      return 0;
+    memcpy(root_dir, v, l + 1);
+    return 1;
+  }
+  static const char *const where[] = {"usb0:/PS2MAX", "ata0:/PS2MAX", "mx4sio0:/PS2MAX"};
+  for (u32 i = 0; i < sizeof where / sizeof where[0]; i++)
+    if (folder_there(where[i])) {
+      mx_snprintf(root_dir, sizeof root_dir, "%s", where[i]);
+      return 2;
+    }
+  return 0;
+}
+static void root_found(int how) {
+  root_state = ROOT_READY;
+  if (root_note)
+    knotify_resolve(root_note);
+  root_note = 0;
+  char text[MX_NOTIFY_TEXT];
+  if (how == 2) {
+    ksetting_set_boot("system.root", root_dir); /* programs read it: this boot only */
+    mx_snprintf(text, sizeof text,
+                "%s: MXOS uses it for this boot. Choose it as the system folder in Settings > Storage "
+                "to keep it.", root_dir);
+    knotify_add(MX_NOTIFY_DEVICE, 0, MX_NOTIFY_ACTION_STORAGE, "", "System folder found", text);
+  } else
+    knotify_add(MX_NOTIFY_DEVICE, 0, MX_NOTIFY_ACTION_STORAGE, "", "System folder ready", root_dir);
+  con_log(CON_GREEN, "system folder: %s%s (%u s)", root_dir, how == 2 ? ", found" : "",
+          kseconds() - root_t0);
+}
+/* after_program: may the next program start? 1 the folder is there or its
+   time is over, 0 it waits (kroot_tick goes on) */
+static int root_wait(void) {
+  if (root_state == ROOT_READY || root_state == ROOT_MISSING)
+    return 1;
+  if (root_state == ROOT_NOT_YET) {
+    root_state = ROOT_WAITING;
+    root_t0 = kseconds();
+  }
+  if (kseconds() < root_t0)
+    root_t0 = kseconds(); /* the kernel's restart (a host's program) started its clock again */
+  int how = root_find();
+  if (how) {
+    root_found(how);
+    kswap_boot();
+    return 1;
+  }
+  if (kseconds() - root_t0 >= ROOT_WAIT) {
+    root_state = ROOT_MISSING;
+    char v[MX_SETTING_VALUE], text[MX_NOTIFY_TEXT];
+    if (ksetting_get("system.root", v, sizeof v) > 0)
+      mx_snprintf(text, sizeof text, "%s is not there: no shell and no swap file until it comes. "
+                  "Connect its device, or choose another in Settings > Storage.", v);
+    else
+      mx_snprintf(text, sizeof text, "No device has a PS2MAX folder: no shell and no swap file "
+                  "until one comes.");
+    root_note = knotify_add(MX_NOTIFY_DEVICE, 1, MX_NOTIFY_ACTION_STORAGE, "", "No system folder", text);
+    con_log(CON_RED, "system folder: not there after %u s", ROOT_WAIT);
+    kswap_boot();
+    return 1;
+  }
+  status_state(ST_BOOT, "waiting for the system folder");
+  return 0;
+}
+/* dev.c, twice a second and at each device change: the folder waited for,
+   or come after its time */
+static int launch_pending(void) { return launch_argc != 0; }
+void kroot_tick(void) {
+  if (root_state == ROOT_WAITING) {
+    if (exec_running() || launch_pending())
+      return; /* a host's program: after_program asks again at its end */
+    if (root_wait())
+      after_program();
+  } else if (root_state == ROOT_MISSING) {
+    int how = root_find();
+    if (!how)
+      return;
+    root_found(how);
+    kswap_reload();
+    if (!exec_running() && !launch_pending())
+      after_program(); /* the shell, now that its folder is there */
+  }
+}
+
 /* Is there a shell to start? Not after a host's program (no_shell), nor on
    mxlink-high, which offers programs no way back. */
 static int shell_there(void) {
-  if (no_shell || !exec_resident() || !card_ready())
+  if (no_shell || !exec_resident() || !card_ready() || !shell_path()[0])
     return 0;
   int fd = mx_fio_open(shell_path(), MX_FIO_RDONLY);
   if (fd < 0)
@@ -1337,13 +1502,15 @@ static int read_words(const char *path, char *to, u32 max, u32 *len) {
 #endif
 
 /* mx OS plan 4e: the shell is a role of the settings, not a path of the
-   kernel's: shell.path (settings.c imports SHELL.CFG once); without it
-   MXSHELL.ELF in the kernel's directory */
+   kernel's: shell.path (settings.c imports SHELL.CFG once), in the system
+   folder when it names no device (kernel version 47); without it no shell */
 static char shell_cfg[MX_SETTING_VALUE];
 static const char *shell_path(void) {
-  if (ksetting_get("shell.path", shell_cfg, sizeof shell_cfg) <= 0)
-    mx_snprintf(shell_cfg, sizeof shell_cfg, "%sMXSHELL.ELF",
-                module_dir[0] ? module_dir : MODULE_DIR); /* PCSX2's: none */
+  char v[MX_SETTING_VALUE];
+  if (ksetting_get("shell.path", v, sizeof v) <= 0)
+    shell_cfg[0] = 0;
+  else
+    in_root(v, shell_cfg, sizeof shell_cfg);
   return shell_cfg;
 }
 /* shell.args (kernel version 46): its words, split at spaces ("..." keeps
@@ -1374,7 +1541,9 @@ static int shell_words(char *to, u32 *len, u32 max) {
 /* mx OS plan 3c: the one swap file of MXOS programs: swap.path and
    swap.size (MiB, 64 by default) in the settings (settings.c imports
    SWAP.CFG once). A program without a swap file of its launch's gets it (in
-   place of the one it asks for); none without the setting. */
+   place of the one it asks for). Kernel version 47: swap.path in the system
+   folder when it names no device, SWAP.SWP there without the setting,
+   "none" for none. */
 static char swap_path[MX_SETTING_VALUE];
 const char *kswap_path(u32 *bytes) {
   char v[16];
@@ -1384,13 +1553,19 @@ const char *kswap_path(u32 *bytes) {
       mib = mib * 10 + (u32)(*p - '0');
   if (bytes)
     *bytes = (mib ? mib : 64) << 20;
-  return ksetting_get("swap.path", swap_path, sizeof swap_path) > 0 ? swap_path : 0;
+  char sp[MX_SETTING_VALUE];
+  if (ksetting_get("swap.path", sp, sizeof sp) <= 0)
+    strcpy(sp, "SWAP.SWP");
+  if (!strcmp(sp, "none"))
+    return 0;
+  in_root(sp, swap_path, sizeof swap_path);
+  return swap_path[0] ? swap_path : 0;
 }
 /* mx_swap_set (swap.c, kernel version 26): the setting written ("" none) */
 int kswap_path_set(const char *path, u32 mib) {
   char v[16];
   mx_snprintf(v, sizeof v, "%u", mib);
-  if (ksetting_set("swap.path", path) < 0 || ksetting_set("swap.size", *path ? v : "") < 0)
+  if (ksetting_set("swap.path", *path ? path : "none") < 0 || ksetting_set("swap.size", *path ? v : "") < 0)
     return -1;
   con_log(CON_GREY, "swap: %s, %u MiB", *path ? path : "none", mib);
   return 0;
@@ -1506,6 +1681,16 @@ static void emu_main(void) {
   if (kvm_boot() < 0)
     mx_printf("mxkernel: no VM at the boot: programs placed as before\n");
   dev_start(); /* no mxio on PCSX2's IOP: no devices watched */
+  /* the system folder (kernel version 47): host:'s at once, none without
+     the setting; then the swap file */
+  if (root_state == ROOT_NOT_YET) {
+    root_state = ROOT_READY, root_dir[0] = 0;
+    char v[MX_SETTING_VALUE] = "";
+    if (ksetting_get("system.root", v, sizeof v) > 0 && root_find() == 1)
+      mx_printf("mxkernel: system folder %s\n", root_dir);
+    else if (v[0])
+      mx_printf("mxkernel: system folder %s not there\n", v);
+  }
   kswap_boot();
   /* started by the command thread, as on the PS2: the end without a
      restart, and programs that start others (launch, launch_beside) */
@@ -1596,6 +1781,7 @@ int main(int argc, char **argv) {
        reads the kernel's directory */
     settings_load(module_dir);
     read_conf();
+    root_state = ROOT_NOT_YET, root_note = 0, root_dir[0] = 0; /* kernel version 47 */
     KT(0xffff00, 0);
     /* mx OS plan step 4a, part 2: on a console whose video the kernel sets
        itself, the BIOS is not used from here (elsewhere, PCSX2 too, its
@@ -1629,7 +1815,10 @@ int main(int argc, char **argv) {
   dev_start();
   ktime_boot(); /* the clock, through mxio (kernel version 29) */
   knet_start(); /* the network's state, through mxsock (kernel version 30) */
-  kswap_boot();
+  /* the swap file once the system folder is there (root_wait); after a
+     restart at once */
+  if (root_state == ROOT_READY || root_state == ROOT_MISSING)
+    kswap_boot();
   /* the tty is up (mxfast): the debug output to ps2client too */
   mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
   if (cmd_init() < 0) {
@@ -1661,7 +1850,9 @@ static void after_program(void) {
     con_log(CON_RED, "%s", crash.note);
   /* A run ends here, however the program ended: not every way out prints the
      marker. Before mxlink says it is ready, so that it cannot end the next run. */
-  if (returned && !launch_argc && !exec_park_service() && !quiet_end)
+  /* not for INIT.ELF (kernel version 47): a console that connects later is
+     sent the boot's lines, and its marker ended the host's next run there */
+  if (returned && !launch_argc && !exec_park_service() && !quiet_end && init_state != 1)
     mx_printf("@@PS2TEST_END@@ status=%d\n", (int)last_status);
   quiet_end = 0;
   int came_back = (int)returned;
@@ -1684,6 +1875,10 @@ static void after_program(void) {
     init_state = 2;
     kswap_reload();
   }
+  /* kernel version 47: nothing of the card's or the system folder's before
+     the folder is there or its time is over (kroot_tick comes back here) */
+  if (!launch_argc && !root_wait())
+    return;
   if (init_state == 0 && !launch_argc) {
     init_state = 2;
     if (!no_shell && init_there()) {
