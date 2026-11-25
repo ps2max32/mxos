@@ -102,7 +102,7 @@ static const char *shell_path(void);
 static int storage_wanted(const char *module); /* kernel version 47 */
 #define MODULE_MEM ((u8 *)0x01000000)
 enum {
-  M_CHIME, M_MXNET = 4, M_MXIO = 14, M_MXSOCK = 15, M_USBD = 16, M_MXPAD = 17, M_MXATA = 22
+  M_CHIME, M_MXNET = 4, M_MXIO = 14, M_MXSOCK = 15, M_USBD = 16, M_MXPAD = 17, M_MXATA = 22, M_MXSWAP = 23
 };
 static const char *const module_names[] = {
     "chime", "poweroff",
@@ -121,9 +121,12 @@ static const char *const module_names[] = {
        none): bdm and its FAT file system, then USB drives, MX4SIO and the
        HDD; mxio watches them come and go (dev.c) */
     "bdm", "bdmfs_fatfs", "usbmass_bd", "mx4sio_bd", "mxata",
+    /* the swap file on the IOP (kernel version 49; maxsdk's iop/vm/mxswap):
+       used with the setting swap.iop */
+    "mxswap",
 };
 #define OPTIONAL(i) ((i) >= M_MXIO)
-_Static_assert(sizeof module_names / sizeof module_names[0] == M_MXATA + 1, "M_* and module_names");
+_Static_assert(sizeof module_names / sizeof module_names[0] == M_MXSWAP + 1, "M_* and module_names");
 #define NMODULES (sizeof module_names / sizeof module_names[0])
 static struct {
   const u8 *start;
@@ -1688,6 +1691,11 @@ static void emu_main(void) {
     mx_printf("mxkernel: no host:mxload.txt\n");
     stopped();
   }
+#ifdef SWAP_IOP_TEST
+  /* the test build of the swap file on the IOP: mxswap.irx beside the program */
+  if (!returned)
+    mx_printf("mxkernel: host:mxswap.irx: %d\n", mx_iop_load_module("host:mxswap.irx"));
+#endif
   iop_last = mx_iop_last_module(); /* iop_kept: the IOP as PCSX2 started it */
   settings_load(""); /* host:settings.dat, a test run's host:*.txt over it */
   con_init();        /* again: in the settings' video mode (kernel version 31) */

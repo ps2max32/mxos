@@ -50,6 +50,8 @@ CFLAGS += $(if $(READY_END),-DMXLINK_READY_END)
 # KTRACE=1: the start's steps as screen colours (ee/main.c)
 CFLAGS += $(if $(KTRACE),-DKTRACE)
 CFLAGS += $(if $(IRQPROF),-DIRQPROF)
+# SWAP_IOP_TEST=1 (make emu): the swap file through host:mxswap.irx
+CFLAGS += $(if $(SWAP_IOP_TEST),-DSWAP_IOP_TEST)
 # maxsdk's protocols with its IOP modules (mxpad.h)
 CFLAGS += -I$(PS2MAX)/libs/maxsdk/common/include
 # EMU=1 (make emu): the kernel for PCSX2, without network, IOP
@@ -67,7 +69,7 @@ SRCS = main.c cmd.c exec.c con.c font.c tlb.c pad.c home.c end.c notrace.c kirq.
        ptab.c dev.c swap.c settings.c time.c net.c kpic.c
 # the IOP modules, in $(OUT)/MXOS: files of the memory card (mc0:/MXOS)
 MODULES = poweroff mxdev9 mxeth mxnet mxfast ioptrap sio2man mxmc mcserv padman libsd mxsnd \
-          mxio mxsock usbd mxpad bdm bdmfs_fatfs usbmass_bd mx4sio_bd mxata
+          mxio mxsock usbd mxpad bdm bdmfs_fatfs usbmass_bd mx4sio_bd mxata mxswap
 
 # the last MiB of main memory (maxsdk's <mx/cpu.h>: MX_KERNEL_LO): the code in
 # its first half, the data in the second, the VM's tables in its last 64 KiB
@@ -127,7 +129,7 @@ $(OUT)/MXOS/%.irx: $(PS2MAX_IRX)/%.irx
 MAXSDK_IRX = $(PS2MAX)/build/libs/maxsdk/iop
 $(OUT)/MXOS/mxdev9.irx $(OUT)/MXOS/mxeth.irx $(OUT)/MXOS/mxnet.irx $(OUT)/MXOS/mxfast.irx \
 $(OUT)/MXOS/mxio.irx $(OUT)/MXOS/mxsock.irx $(OUT)/MXOS/usbmass_bd.irx $(OUT)/MXOS/mxata.irx \
-$(OUT)/MXOS/mxpad.irx $(OUT)/MXOS/mxsnd.irx $(OUT)/MXOS/mxmc.irx: maxsdk-iop
+$(OUT)/MXOS/mxpad.irx $(OUT)/MXOS/mxsnd.irx $(OUT)/MXOS/mxmc.irx $(OUT)/MXOS/mxswap.irx: maxsdk-iop
 	@mkdir -p $(dir $@)
 	cp $(MAXSDK_IRX)/$(notdir $@) $@
 maxsdk-iop:

@@ -42,8 +42,24 @@ static void none_warning(void) {
                         "Choose a place for it.");
 }
 
+/* the setting swap.iop (kernel version 49): the swap file through mxswap.irx
+   on the IOP, compressed (maxsdk's vm.c), from its next attach */
+static void iop_mode(void) {
+  extern int mx__vm_swap_iop;
+#ifdef SWAP_IOP_TEST /* a test build (make emu SWAP_IOP_TEST=1): on unless set off */
+  char v[8];
+  mx__vm_swap_iop = !(ksetting_get("swap.iop", v, sizeof v) > 0 && !strcmp(v, "off"));
+#ifdef MXLINK_EMU
+  mx__vm_swap_iop *= 2; /* PCSX2's host: files work through the IOP */
+#endif
+#else
+  mx__vm_swap_iop = ksetting_on("swap.iop");
+#endif
+}
+
 /* the file attached to the VM: 0, or -1 */
 static int attach(void) {
+  iop_mode();
   u32 bytes;
   const char *path = kswap_path(&bytes);
   char text[MX_NOTIFY_TEXT];
@@ -80,6 +96,11 @@ static int attach(void) {
 /* after the boot's VM and device watch: the setting read, attached if its
    device is there (else when it comes, kswap_device) */
 void kswap_boot(void) {
+  iop_mode();
+  extern int mx__vm_swap_iop;
+  extern void mx__vm_swap_iop_buf(void);
+  if (mx__vm_swap_iop)
+    mx__vm_swap_iop_buf(); /* its buffer while the pool is empty (vm.c) */
   const char *path = kswap_path(0);
   if (!path || !path[0]) {
     state = MX_SWAP_NONE, device[0] = 0;
@@ -213,6 +234,7 @@ int kswap_host(const char *spec) {
   if (state == MX_SWAP_ATTACHED)
     state = MX_SWAP_WAITING;
   mx__vm_swap_size(mib << 20);
+  iop_mode();
   extern const char *mx__loader_swap;
   mx__loader_swap = host_path;
   if (mx__vm_swap_open(host_path) < 0 || !mx__vm_has_swap()) {
