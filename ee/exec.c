@@ -450,13 +450,6 @@ int exec_proc_parked(int proc) {
       return 1;
   return 0;
 }
-/* the physical memory of the program that ends (sound_off): all from 1 MiB
-   up but the cores of those that wait or run beside it, at the top */
-void exec_end_range(u32 *lo, u32 *hi) {
-  *lo = vm_boot ? frames_lo : LOW;
-  *hi = npark ? park.core_phys : MX_KERNEL_LO;
-}
-
 /* the program a parked one started (proc_spawn, proc_wait; kernel version
    14): its process once it runs, and the last one's end */
 static int last_child, last_child_status;
@@ -1015,6 +1008,7 @@ static const struct mxk_services kernel = {
     .home_picture_read = kpic_read,
     .front_wait = kproc_front_wait,
     .gfx_gen = end_gfx_gen,
+    .proc_in_front = kproc_in_front,
     .vm_refill_hist = mx__vm_refill_hist,
     .vm_map_file_flags = mx__vm_map_file_flags,
     .proc_memory = ptab_memory,

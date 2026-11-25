@@ -408,8 +408,10 @@ void exec_started(const char *path) {
    crash in one of its threads): the command thread takes it away alone */
 static volatile int side_ending;
 int side_end_pending(void) { return side_ending; }
+static int sound_stop(u32 proc);
 void side_end_now(void) {
   int proc = side_ending;
+  sound_stop((u32)proc); /* before its memory is another's */
   int service = exec_side_ended(proc);
   int status = 0;
   ptab_status(proc, &status);
@@ -532,6 +534,11 @@ void kproc_front_wait(void) {
 }
 /* step 4d: the home button in process from (home.c, in its thread): the
    shell in front, told by an event (MX_EVENT_HOME) */
+/* version 48: is the caller's process in front */
+int kproc_in_front(void) {
+  int me = ksched_active() ? ksched_thread_proc(mx_bios_get_thread_id()) : 0;
+  return me <= 0 || end_proc_front() <= 0 || me == end_proc_front();
+}
 int kproc_front_home(int shell, int from) {
   return from > 0 ? front_request(shell, 0, from) : -1;
 }
@@ -1102,21 +1109,29 @@ static int iop_kept(void) {
 #define PAD_CLOSE 0x8000010D
 #define MXSND_SID 0x4D58534Eu /* libs/maxsdk/common/include/mxsnd.h */
 #define MXSND_STOP 3
+#define MXSND_ALL 0xFFFFFFFFu
 static struct mx_sif_client pad_rpc, snd_rpc;
 static s32 rpc_cmd[32] MX_DMA_LINES, rpc_res[32] MX_DMA_LINES;
 
 /* mxsnd stays for the next program: its status writes into the program's
-   memory stop, and its voices and stream are silenced, when its status area
-   is in the ending program's physical memory (exec_end_range: not the one
-   beside it, whose sound goes on). Without mxsnd, the chime's quiet mode
-   stops the voices. */
+   memory stop, and its voices and stream are silenced, when the sound is
+   process proc's (MXSND_ALL: whose ever). 0: there is no mxsnd. */
+static int sound_stop(u32 proc) {
+  if (mx_sif_bind_tries(&snd_rpc, MXSND_SID, 2) < 0 || !snd_rpc.server)
+    return 0;
+  volatile s32 *a = MX_UNCACHED(rpc_cmd);
+  a[0] = (s32)proc, a[1] = a[2] = a[3] = 0;
+  mx_sif_call(&snd_rpc, MXSND_STOP, (void *)a, 16, (void *)MX_UNCACHED(rpc_res), 4);
+  return 1;
+}
+/* at the end of the program in front: not the one beside it, whose sound
+   goes on. After a restart every program is gone. Without mxsnd, the chime's
+   quiet mode stops the voices. */
 static void sound_off(void) {
-  if (mx_sif_bind_tries(&snd_rpc, MXSND_SID, 2) == 0 && snd_rpc.server) {
-    u32 lo, hi;
-    exec_end_range(&lo, &hi);
-    volatile s32 *a = MX_UNCACHED(rpc_cmd);
-    a[0] = (s32)lo, a[1] = (s32)hi, a[2] = a[3] = 0;
-    mx_sif_call(&snd_rpc, MXSND_STOP, (void *)a, 16, (void *)MX_UNCACHED(rpc_res), 4);
+  int proc = end_proc_front(), dropped = end_proc_dropped();
+  if (sound_stop(proc > 0 ? (u32)proc : MXSND_ALL)) {
+    if (dropped > 0)
+      sound_stop((u32)dropped);
     return;
   }
   int fd = module_open(M_CHIME), size = fd < 0 ? -1 : mx_fio_lseek(fd, 0, MX_FIO_SEEK_END);

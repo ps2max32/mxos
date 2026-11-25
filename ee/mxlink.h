@@ -91,6 +91,7 @@ void home_hold(void);
 int kproc_shell(void);
 int kproc_init(void); /* the caller is INIT.ELF, running at the first start (main.c) */
 void kproc_front_wait(void);
+int kproc_in_front(void);
 /* kpic.c: the picture of the program paused at the home button */
 struct mx_picture;
 void kpic_set(const struct mx_picture *p, u32 phys);
@@ -424,11 +425,11 @@ int mxlink_crash(struct mx_crash *c);
 struct mx_proc_info;
 struct mx_msg;
 int end_proc_front(void);
+int end_proc_dropped(void);
 u32 end_gfx_gen(void);
 int end_proc_parked(void);
 int kproc_list(struct mx_proc_info *p, int max);
 int kproc_self(void);
-void exec_end_range(u32 *lo, u32 *hi);
 int kproc_spawn(int argc, const char *args, u32 args_len, const char *swap);
 int kproc_spawn_in(const char *dir, int argc, const char *args, u32 args_len, const char *swap);
 /* the working directory of the next program exec_elf starts ("" or 0: its

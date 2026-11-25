@@ -89,6 +89,7 @@ static int drop;
 /* the process of the program in front, and of the last one that waits (0:
    none) */
 int end_proc_front(void) { return proc_now; }
+int end_proc_dropped(void) { return proc_dropped; }
 /* Kernel version 34 (mx OS plan step 5b): how often the graphics went to
    another process or were reset: another process in front, or the units
    reset at the end of the one in front. A program whose count moved since
