@@ -192,6 +192,16 @@ void ptab_name(int proc, char *to, u32 room) {
   to[l] = 0;
 }
 
+/* the processes that have not ended (kernel version 50: their files stay
+   when another program ends), but not, up to max; 0 ends the list */
+void ptab_live(u8 *ids, int max, int but) {
+  int n = 0;
+  for (int i = 0; i < PTAB_N && n < max - 1; i++)
+    if (tab[i].used && tab[i].state && tab[i].proc != but && tab[i].proc > 0 && tab[i].proc < 256)
+      ids[n++] = (u8)tab[i].proc;
+  ids[n] = 0;
+}
+
 /* 1: proc ended, its status in *status; 0: it runs; -1: not known */
 int ptab_status(int proc, int *status) {
   struct ptab *e = find(proc);

@@ -377,6 +377,7 @@ void ptab_end(int proc, int status);
 void ptab_end_all(int status);
 int ptab_status(int proc, int *status);
 int ptab_parent(int proc);
+void ptab_live(u8 *ids, int max, int but);
 int ptab_waiting(int proc);
 int ptab_list(struct mx_proc_info *p, int max);
 struct mx_proc_mem;

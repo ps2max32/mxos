@@ -94,6 +94,7 @@ static u32 crash_return KEPT = 0;
 #define MODULE_DIR "mc0:/MXOS/"
 #endif
 static char module_dir[32] KEPT;
+static int cleanup_gone KEPT; /* the process a launch in its place ended (iop_cleanup) */
 /* the SIF's software registers over a restart, once the BIOS's table is not
    used (kirq_bios_leave) */
 extern u32 *mx__sif_sysregs_kept;
@@ -912,6 +913,7 @@ static int launch(int argc, const char *args, u32 args_len, const char *swap, in
   mx__vm_swap_close();
   launch_argc = argc;
   launch_cleanup = 1;
+  cleanup_gone = end_proc_front();
   restart();
 }
 
@@ -1149,7 +1151,7 @@ static void sound_off(void) {
     mx_fio_close(fd);
 }
 
-extern void mx__fio_cleanup(int (*keep)(int fd));
+extern void mx__fio_cleanup(int (*keep)(int fd), const u8 *live);
 /* the sockets a program left open: common/include/mxsock.h's MXSOCK_CLOSE_ALL.
    Not through <mx/net.h>, whose buffers do not fit here */
 #define MXSOCK_SID 0x4D58534B
@@ -1170,7 +1172,13 @@ static void iop_cleanup(void) {
   /* descriptors 0-2 are the tty's; the VM's (its swap file, the ELF and
      mapped files of the programs that go on: a service, one that waits)
      stay */
-  mx__fio_cleanup(mx__vm_uses_fd);
+  /* and those of the processes that go on (kernel version 50): a parent
+     that waits for its child keeps its files; not the one a launch in its
+     place ended */
+  u8 live[16];
+  ptab_live(live, sizeof live, cleanup_gone);
+  cleanup_gone = 0;
+  mx__fio_cleanup(mx__vm_uses_fd, live);
   if (iop_silent())
     return;
   close_sockets();
@@ -1753,7 +1761,16 @@ static void after_program(void);
 #define KT(first, again) ((void)0)
 #endif
 
+/* the owner of the files a thread opens (mxio, kernel version 50): its
+   process, 0 for the kernel's own (iop_cleanup) */
+extern int (*mx__fio_proc)(void);
+static int fio_proc(void) {
+  int p = kproc_self();
+  return p > 0 && p < 256 ? p : 0;
+}
+
 int main(int argc, char **argv) {
+  mx__fio_proc = fio_proc;
   tlb_restore();
   /* PCSX2's TLB ignores the ASID: the kernel's way round it (kproc.c), in the
      PS2 build too when it runs there */
