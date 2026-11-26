@@ -123,7 +123,7 @@ u32 knotify_seq(void) { return notify_seq_now; }
 
 static struct {
   struct mxio_devs d;
-  u32 in[16], out[16];
+  u32 in[16] __attribute__((aligned(64))), out[16] __attribute__((aligned(64))); /* SIF DMA's */
 } area __attribute__((section(".padarea"), aligned(64)));
 static struct mx_sif_client io_rpc;
 static int dev_on;

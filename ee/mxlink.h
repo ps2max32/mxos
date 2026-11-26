@@ -222,6 +222,7 @@ int ktime_set(s64 utc);
 /* kernel version 30: the network (net.c) */
 struct mx_net_status;
 void knet_start(void);
+void knet_report(void);
 void knet_setting(void);
 int knet_changed(void);
 void knet_now(void);

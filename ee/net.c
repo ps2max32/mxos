@@ -29,6 +29,7 @@
 #ifdef MXLINK_EMU
 /* PCSX2's kernel loads no mxsock: no network (and the room for the code) */
 void knet_start(void) {}
+void knet_report(void) {}
 void knet_setting(void) {}
 int knet_changed(void) { return 0; }
 void knet_now(void) {}
@@ -50,7 +51,10 @@ static struct {
   struct mxnet_status st; /* mxsock's DMA */
   struct mxnet_status told;
   u32 magic, told_at; /* told_at: kseconds() when told was taken (the lease) */
-  u32 in[16], out[16];
+  /* SIF DMA's: 16-byte blocks, so on their own lines (after magic and
+     told_at, 8 bytes past one, MXSOCK_NET_WATCH's answer was not seen and
+     mxsock took magic for the address: kernel versions 30 to 50) */
+  u32 in[16] __attribute__((aligned(64))), out[16] __attribute__((aligned(64)));
 } area __attribute__((section(".padarea"), aligned(64)));
 
 static struct mx_sif_client sock_rpc;
@@ -120,6 +124,21 @@ static void apply(int force) {
     con_log(CON_GREY, "network: %s", c.dhcp ? "DHCP" : "fixed address");
 }
 
+/* why knet_start gave up (knet_report): -1 the bind failed, -2 no mxsock
+   server, -3 the call failed, -4 another answer (net_answer) */
+static int net_why;
+static s32 net_answer[4], net_r;
+
+/* once the tty is up (main.c): a network that did not start, said why */
+void knet_report(void) {
+  static const char *const why[] = {"", "the bind to mxsock failed", "mxsock is not there",
+                                    "MXSOCK_NET_WATCH failed", "MXSOCK_NET_WATCH answered"};
+  if (!net_on)
+    con_log(CON_YELLOW, "network: not started: %s, call %d, answer %d %d %d %d",
+            why[net_why < 0 && net_why >= -4 ? -net_why : 0], net_r, (int)net_answer[0],
+            (int)net_answer[1], (int)net_answer[2], (int)net_answer[3]);
+}
+
 /* after the IOP's set-up (main.c), mxsock loaded: it writes the state here
    from now */
 void knet_start(void) {
@@ -131,14 +150,22 @@ void knet_start(void) {
   volatile u32 *w = (volatile u32 *)st();
   for (u32 i = 0; i < sizeof area.st / 4; i++)
     w[i] = 0;
-  if (mx_sif_bind_tries(&sock_rpc, MXSOCK_SID, 2) < 0 || !sock_rpc.server)
+  net_why = 0;
+  if (mx_sif_bind_tries(&sock_rpc, MXSOCK_SID, 2) < 0 || !sock_rpc.server) {
+    net_why = sock_rpc.server ? -1 : -2;
     return;
+  }
   volatile u32 *in = MX_UNCACHED(area.in), *out = MX_UNCACHED(area.out);
   in[0] = mx_paddr_of(&area.st).v;
   out[0] = 0;
-  if (mx_sif_call(&sock_rpc, MXSOCK_NET_WATCH, (void *)in, 16, (void *)out, 16) < 0 ||
-      out[0] != MXNET_STATUS_VERSION)
+  int r = mx_sif_call(&sock_rpc, MXSOCK_NET_WATCH, (void *)in, 16, (void *)out, 16);
+  net_r = r;
+  for (int i = 0; i < 4; i++)
+    net_answer[i] = (s32)out[i];
+  if (r < 0 || out[0] != MXNET_STATUS_VERSION) {
+    net_why = r < 0 ? -3 : -4;
     return;
+  }
   net_seen = 0;
   net_on = 1;
   start_check = 1; /* when its first state is here (knet_now) */

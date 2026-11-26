@@ -41,7 +41,7 @@ struct pad_settings pad_settings __attribute__((section(".kept"))) = {0};
    area and the call's buffers, on lines of their own, never touched cached. */
 static struct {
   struct mxpad_area area;
-  u32 in[16], out[16];
+  u32 in[16] __attribute__((aligned(64))), out[16] __attribute__((aligned(64))); /* SIF DMA's */
   /* the command thread's and the shell's calls (kernel version 28), each
      on a client of its own: a program's rumble may be under way meanwhile */
   u32 cin[32], cout[32], sin[32], sout[32];

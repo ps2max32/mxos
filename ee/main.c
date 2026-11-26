@@ -1158,9 +1158,16 @@ extern void mx__fio_cleanup(int (*keep)(int fd), const u8 *live);
 #define MXSOCK_CLOSE_ALL 11
 static struct mx_sif_client sock_rpc;
 static s32 sock_io[16] __attribute__((aligned(64)));
-static void close_sockets(void) {
-  if (mx_sif_bind_tries(&sock_rpc, MXSOCK_SID, 2) == 0 && sock_rpc.server)
-    mx_sif_call(&sock_rpc, MXSOCK_CLOSE_ALL, MX_UNCACHED(sock_io), 32, MX_UNCACHED(sock_io + 8), 16);
+/* but those of the processes in live (kernel version 51; 0-terminated) */
+static void close_sockets(const u8 *live) {
+  if (mx_sif_bind_tries(&sock_rpc, MXSOCK_SID, 2) == 0 && sock_rpc.server) {
+    volatile s32 *a = MX_UNCACHED(sock_io);
+    volatile u8 *l = (volatile u8 *)(a + 1);
+    a[0] = 1;
+    for (int i = 0; i < 16; i++)
+      l[i] = live[i];
+    mx_sif_call(&sock_rpc, MXSOCK_CLOSE_ALL, (void *)a, 32, MX_UNCACHED(sock_io + 8), 16);
+  }
 }
 /* A server of the IOP that does not answer while this cleans up: the calls
    give up after a second (mx__sif_wait_limit), and the IOP is reset */
@@ -1172,16 +1179,16 @@ static void iop_cleanup(void) {
   /* descriptors 0-2 are the tty's; the VM's (its swap file, the ELF and
      mapped files of the programs that go on: a service, one that waits)
      stay */
-  /* and those of the processes that go on (kernel version 50): a parent
-     that waits for its child keeps its files; not the one a launch in its
-     place ended */
+  /* and those of the processes that go on (kernel version 50, sockets 51):
+     a parent that waits for its child keeps its files and sockets; not the
+     one a launch in its place ended */
   u8 live[16];
   ptab_live(live, sizeof live, cleanup_gone);
   cleanup_gone = 0;
   mx__fio_cleanup(mx__vm_uses_fd, live);
   if (iop_silent())
     return;
-  close_sockets();
+  close_sockets(live);
   if (iop_silent())
     return;
   pads_close();
@@ -1861,6 +1868,7 @@ int main(int argc, char **argv) {
     kswap_boot();
   /* the tty is up (mxfast): the debug output to ps2client too */
   mx_debug_sinks(MX_SINK_SIO | MX_SINK_TTY);
+  knet_report();
   if (cmd_init() < 0) {
     con_log(CON_RED, "the command thread did not start");
     stopped();
