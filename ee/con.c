@@ -192,7 +192,10 @@ void con_line(u32 row, u32 rgb, const char *fmt, ...) {
   va_start(ap, fmt);
   mx_vsnprintf(buf, sizeof buf, fmt, ap);
   va_end(ap);
-  if (!on)
+  /* not over a running program's picture: GS memory is its own then (a
+     network change drew the network line into the shell's textures); the
+     screen is drawn again at its end (program_ended) */
+  if (!on || exec_running())
     return;
   clear_row(row);
   con_text(0, row, rgb, buf);
