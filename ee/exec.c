@@ -187,6 +187,19 @@ static struct vm_space *boot_space;
 static void *core_pin;
 static u32 core_pin_bytes;
 
+/* the BIOS's mappings again after a start that failed with the core
+   mapped or the ASID set, and the VM's entries over them when the VM goes
+   on (as at a program's end, program_ended): without them the frames'
+   window (MX_PHYS_WIN) was gone, and the kernel hung at its next use of
+   the VM's tables (a shell's start of a program whose core did not fit) */
+static void tlb_back(void) {
+  int was = mx_di();
+  tlb_restore();
+  if (VM_KEPT)
+    mx__vm_tlb_again();
+  mx_irq_restore(was);
+}
+
 static int core_place(u32 end, u32 heap) {
   /* its size and where its run must be: the TLB entries that cover it
      (tlb.c: no more whole MiBs since 2026-11-17) */
@@ -220,7 +233,7 @@ static int core_place(u32 end, u32 heap) {
   if (n >= 0)
     mx__vm_tlb_fix(); /* the VM on (another's): not its ring's any more */
   if (n < 0) {
-    tlb_restore();
+    tlb_back();
     if (core_pin)
       mx__vm_frames_give(core_pin, core_pin_bytes);
     core_pin = 0, core_pin_bytes = 0;
@@ -829,7 +842,7 @@ int exec_park_drop(void) {
 static int fail(int fd, const char *path, const char *what) {
   if (core_moved) {
     core_moved = 0;
-    tlb_restore();
+    tlb_back();
   }
   if (fd >= 0)
     mx_fio_close(fd);

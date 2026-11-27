@@ -245,14 +245,17 @@ u32 tlb_core_plan(u32 bytes, u32 *align) {
     u32 size = (bytes + gran[g] - 1) & ~(gran[g] - 1), big = 0;
     /* off as a multiple of 1 MiB that is none of 4 MiB: no 4 MiB pages
        planned (the run is not asked to be at a multiple of 4 MiB) */
-    int n = core_cover(0x00100000u + size, 1u << 20, TLB_CORE_N, 0, 0, 0, 0, &big);
+    /* the entries left: those of the programs beside it are kept
+       (tlb_core_keep; a shell and a service took 4 of the 8, and a core
+       planned for all 8 could not be mapped) */
+    int n = core_cover(0x00100000u + size, 1u << 20, TLB_CORE_N - core_keep, 0, 0, 0, 0, &big);
     if (n < 0)
       continue;
     u32 cost = size - bytes + (u32)n * (96u << 10);
     if (cost < best_cost)
       best = size, best_cost = cost, best_big = big;
   }
-  if (!best) /* cannot be: 1 MiB pieces always cover */
+  if (!best) /* none fits in the entries left: tlb_core_map refuses it */
     best = (bytes + (1u << 20) - 1) & ~((1u << 20) - 1);
   *align = best_big > (1u << 20) ? 1u << 20 : best_big < (32u << 10) ? 32u << 10 : best_big;
   return 0x00100000u + best;
