@@ -340,11 +340,38 @@ static void slot_set(const void *base, u32 i, int id) {
   *(volatile int *)((const u8 *)base + i * tables.slot_size + tables.id_offset) = id;
 }
 
+/* its handlers out, remembered in the record (end_unpark adds them again).
+   Beside, its slots are cleared too: it goes on, and an id of a handler
+   gone may be another's later */
+static void handlers_out(int clear) {
+  for (u32 i = 0; i < tables.nintc; i++) {
+    int id = slot_id(tables.intc, i);
+    if (id > 0) {
+      mx_bios_remove_intc_handler((int)i, id);
+      parked.intc_mask |= 1u << i;
+      if (clear)
+        slot_set(tables.intc, i, 0);
+    }
+  }
+  for (u32 i = 0; i < tables.ndmac; i++) {
+    int id = slot_id(tables.dmac, i);
+    if (id > 0) {
+      mx_bios_remove_dmac_handler((int)i, id);
+      parked.dmac_mask |= 1u << i;
+      if (clear)
+        slot_set(tables.dmac, i, 0);
+    }
+  }
+}
+
 /* In the waiting program's thread (self), under its ASID: its handlers taken
    from the BIOS (they would run in the other's address space), its other
    threads suspended, what the kernel knows of it kept. -1: not possible.
-   beside (step 2e-2): it goes on beside the other, its handlers and threads
-   as they are (the kernel switches to its address space for them, kproc.c). */
+   beside (step 2e-2): it goes on beside the other, its threads as they are.
+   Its handlers go out too (mx OS plan step 6, 2026-11-27: only the program
+   in front has interrupts of its own; before, the shell beside a game kept
+   its GS, vblank, hires timer and VIF1 handlers, filtered or idle, and with
+   them its core's TLB entries were needed at interrupt level). */
 int end_park(int self, int beside, void *rec) {
   if (!tables_known || !tables.intc_entry || !tables.dmac_entry ||
       !program_range(tables.intc_entry, 4) || !program_range(tables.dmac_entry, 4) ||
@@ -359,23 +386,9 @@ int end_park(int self, int beside, void *rec) {
   parked.proc = proc_now, parked.dropped = proc_dropped;
   parked.intc_mask = parked.dmac_mask = 0;
   parked.nthreads = 0;
+  handlers_out(beside);
   if (beside)
     return 0;
-  for (u32 i = 0; i < tables.nintc; i++) {
-    int id = slot_id(tables.intc, i);
-    if (id > 0) {
-      mx_bios_remove_intc_handler((int)i, id);
-      parked.intc_mask |= 1u << i;
-    }
-  }
-  for (u32 i = 0; i < tables.ndmac; i++) {
-    int id = slot_id(tables.dmac, i);
-    if (id > 0) {
-      mx_bios_remove_dmac_handler((int)i, id);
-      parked.dmac_mask |= 1u << i;
-    }
-  }
-  parked.nthreads = 0;
   for (int id = 1; id < NIDS && parked.nthreads < sizeof parked.threads; id++)
     if (id != self && thread_mine(id)) {
       mx_bios_suspend_thread(id);
@@ -387,8 +400,8 @@ int end_park(int self, int beside, void *rec) {
 /* In the command thread, under its ASID again, its kernel state back: its
    handlers added again (their new ids in its slots), its causes and
    channels on, its threads resumed. */
-/* beside (end_park): what the kernel knows of it back, its handlers and
-   threads as they are */
+/* beside (end_park): what the kernel knows of it back, its handlers too,
+   its threads as they are */
 static void unpark_state(void) {
   for (int i = 0; i < NIDS / 32; i++)
     threads_before[i] = parked.threads_before[i], semas_before[i] = parked.semas_before[i];
@@ -397,12 +410,7 @@ static void unpark_state(void) {
   gfx_gen++;
   proc_now = parked.proc, proc_dropped = parked.dropped;
 }
-void end_unpark_beside(void) {
-  unpark_state();
-  nparked--;
-}
-void end_unpark(void) {
-  unpark_state();
+static void handlers_in(void) {
   for (u32 i = 0; i < tables.nintc; i++)
     if (parked.intc_mask >> i & 1) {
       slot_set(tables.intc, i, mx_bios_add_intc_handler((int)i, (int (*)(int, void *, void *))(uintptr_t)tables.intc_entry, 0, 0));
@@ -413,6 +421,15 @@ void end_unpark(void) {
       slot_set(tables.dmac, i, mx_bios_add_dmac_handler((int)i, (int (*)(int, void *, void *))(uintptr_t)tables.dmac_entry, 0, 0));
       mx_bios_enable_dmac((int)i);
     }
+}
+void end_unpark_beside(void) {
+  unpark_state();
+  handlers_in();
+  nparked--;
+}
+void end_unpark(void) {
+  unpark_state();
+  handlers_in();
   for (u32 i = 0; i < parked.nthreads; i++)
     mx_bios_resume_thread(parked.threads[i]);
   nparked--;
