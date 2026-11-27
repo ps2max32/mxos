@@ -8,7 +8,8 @@
 #                   memory: to boot from the PS2's storage)
 #   make shell      mxshell (apps/mxshell, MXSHELL=<its directory>) and its
 #                   storage drivers into build/apps/mxos/MXOS, for the card;
-#                   with mxlink's app (MXLINK.ELF) and SERVICES.CFG
+#                   with mxlink's app (MXLINK.ELF), SERVICES.CFG and the
+#                   folder's icon for the card browser (icon/)
 #   make emu        build/apps/mxos-emu/mxkernel.elf:
 #                   the kernel for PCSX2: libmxk programs need one, and it has
 #                   no network there; it starts what host:mxload.txt says
@@ -157,6 +158,7 @@ shell: mxlink-iop
 	@mkdir -p $(OUT)/MXOS
 	cp $(OUT)/mxshell/MXOS/* $(OUT)/MXOS/
 	cp $(OUT)/mxlink/mxlink.elf $(OUT)/MXOS/MXLINK.ELF
+	cp icon/icon.sys icon/MXOS.ICN $(OUT)/MXOS/
 	printf '%sMXLINK.ELF\n' '$(or $(MODULE_DIR),mc0:/MXOS/)' > $(OUT)/MXOS/SERVICES.CFG
 
 # INIT.ELF, the boot script's program (init/; kernel version 46): beside the

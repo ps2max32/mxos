@@ -116,6 +116,12 @@ make shell         # mxshell into build/apps/mxos/MXOS
   directory of their own, e.g. `mc0:/MXOS/NEW`, and boot that kernel as the
   one-shot (`once mc0: mc?:/MXOS/NEW/MXKERNEL.ELF`): if it fails, a reset boots
   the default. The memory card driver is maxsdk's `mxmc` (16 open files).
+- `MXOS/icon.sys`, `MXOS/MXOS.ICN`: the folder's icon in the PS2's card
+  browser ("MX OS / kernel"), from `icon/`. `tools/mx-icon.py` makes it, and
+  mxboot's, in the shell's look: a bevelled MX on a two-layer plinth (OS and
+  KERNEL; BOOT and MAIN or a region), under one warm light (`--preview` draws the files
+  back as a picture). It needs the shell's font and Python with numpy and
+  Pillow; the files are kept in git, so a build does not run it.
 - `make SHOT=1`: on PCSX2 (no network there) the start stops at SMAP; this
   saves the screen to `host:mxkernel.tga` there and prints the test end marker.
 - Needs maxsdk (its own copy of libmx, built for size, in
