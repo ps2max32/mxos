@@ -1246,8 +1246,7 @@ int exec_elf(int argc, const char *args, u32 args_len) {
     dropped = 1;
   }
   /* at its own addresses: the BIOS's mappings, ASID 0 (after a program that
-     waits, the TLB and the ASID are still that one's; one beside kept its
-     core's entries, tlb_core_keep) */
+     waits, the TLB and the ASID are still that one's) */
   if (!core_off_at && (mx__asid || mx__core_off || dropped))
     tlb_restore();
   u32 bytes = 0, text_lo = ~0u, text_hi = 0;

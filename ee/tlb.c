@@ -133,11 +133,15 @@ static void tlb_kernel_first(void) {
    here stays mapped. */
 #define TLB_CORE 13
 #define TLB_CORE_N 8
-/* the core slots of a process beside the one in front (step 2e-2, kproc.c):
-   kept by tlb_restore, which then leaves out the BIOS's entries over its
-   range [0x10_0000, va_end), and tlb_core_map writes after them */
-static u32 core_keep, keep_end;
-void tlb_core_keep(u32 n, u32 va_end) { core_keep = n, keep_end = va_end; }
+/* the processes beside the one in front (step 2e-2, kproc.c): their cores
+   reach to va_end, and tlb_restore leaves out the BIOS's global entries over
+   [0x10_0000, va_end), which would match their addresses under any ASID.
+   Their cores have no entries of their own (mx OS plan step 6, part 5,
+   2026-11-27; before, each kept its slots and the one in front had those
+   left: a shell and a service took 4 of the 8), so the one in front has all
+   8. */
+static u32 keep_end;
+void tlb_core_side(u32 va_end) { keep_end = va_end; }
 
 /* the BIOS's entry i maps over [0x10_0000, keep_end): the side's range */
 static int over_side(u32 i);
@@ -152,7 +156,7 @@ void tlb_restore(void) {
   tlb_kernel_first();
   for (u32 i = TLB_FIRST; i < TLB_N; i++) {
     u32 pm, hi, lo0, lo1;
-    if (i == TLB_KCODE || i == TLB_KDATA || (i >= TLB_CORE && i < TLB_CORE + core_keep)) {
+    if (i == TLB_KCODE || i == TLB_KDATA) {
       differs[i] = 0;
       continue;
     }
@@ -163,12 +167,10 @@ void tlb_restore(void) {
       tlb_write(i, 0, 0xE0000000u + ((TLB_N + i) << 13), 0, 0);
   }
   for (u32 i = TLB_FIRST; i < TLB_N; i++)
-    if (i >= TLB_CORE && i < TLB_CORE + core_keep)
-      continue;
     /* beside a process's core: no global entry of the BIOS over its range
        (two entries matching one address are undefined), the others as
        they are (the kernel's own use of main memory: MODULE_MEM) */
-    else if (core_keep && i >= TLB_CORE && i < TLB_CORE + TLB_CORE_N && over_side(i))
+    if (keep_end && i >= TLB_CORE && i < TLB_CORE + TLB_CORE_N && over_side(i))
       tlb_write(i, 0, 0xE0000000u + (i << 13), 0, 0);
     else if (i >= TLB_USED)
       tlb_write(i, 0, 0xE0000000u + (i << 13), 0, 0);
@@ -182,8 +184,8 @@ void tlb_restore(void) {
    the ASID now set (mx__asid; docs/mx-os-plan.md, step 2b): the BIOS's
    global entries of cached main memory from 0x10_0000 (13-20) give way to
    entries of that ASID (the main stack is in the core: maxsdk's VM linker
-   scripts). The entries it took (after those kept for a process beside,
-   tlb_core_keep), or -1, the TLB unchanged, if more than those 8 are needed
+   scripts). The entries it took, or -1, the TLB unchanged, if more than
+   those 8 are needed
    or it reaches the entries that stay (41-44). tlb_restore writes the
    BIOS's back.
 
@@ -245,17 +247,14 @@ u32 tlb_core_plan(u32 bytes, u32 *align) {
     u32 size = (bytes + gran[g] - 1) & ~(gran[g] - 1), big = 0;
     /* off as a multiple of 1 MiB that is none of 4 MiB: no 4 MiB pages
        planned (the run is not asked to be at a multiple of 4 MiB) */
-    /* the entries left: those of the programs beside it are kept
-       (tlb_core_keep; a shell and a service took 4 of the 8, and a core
-       planned for all 8 could not be mapped) */
-    int n = core_cover(0x00100000u + size, 1u << 20, TLB_CORE_N - core_keep, 0, 0, 0, 0, &big);
+    int n = core_cover(0x00100000u + size, 1u << 20, TLB_CORE_N, 0, 0, 0, 0, &big);
     if (n < 0)
       continue;
     u32 cost = size - bytes + (u32)n * (96u << 10);
     if (cost < best_cost)
       best = size, best_cost = cost, best_big = big;
   }
-  if (!best) /* none fits in the entries left: tlb_core_map refuses it */
+  if (!best) /* none fits in the 8 entries: tlb_core_map refuses it */
     best = (bytes + (1u << 20) - 1) & ~((1u << 20) - 1);
   *align = best_big > (1u << 20) ? 1u << 20 : best_big < (32u << 10) ? 32u << 10 : best_big;
   return 0x00100000u + best;
@@ -263,7 +262,7 @@ u32 tlb_core_plan(u32 bytes, u32 *align) {
 
 int tlb_core_map(u32 va_end, u32 off) {
   u32 pm[TLB_CORE_N], hi[TLB_CORE_N], lo0[TLB_CORE_N], lo1[TLB_CORE_N];
-  u32 first = TLB_CORE + core_keep, max = TLB_CORE_N - core_keep;
+  u32 first = TLB_CORE, max = TLB_CORE_N;
   if (va_end > CORE_VA_MAX)
     return -1;
   int n = core_cover(va_end, off, max, pm, hi, lo0, lo1, 0);
@@ -298,6 +297,32 @@ void tlb_emu_asid(u32 asid) {
       continue;
     tlb_write(i, pm, hi, lo0, lo1);
   }
+}
+
+/* PCSX2 again: a side's core has no entries of its own (kproc.c), so its
+   addresses would be the front's entries' there, and its threads would run
+   in the front's core. While a side's space is live, the front's core
+   entries (asid's, slots 13-20, which the VM's ring never takes) are out,
+   and back at the switch to the front's. Only where tlb_emu is set. */
+static u32 hidden[TLB_CORE_N][4];
+static u8 nhidden, hidden_at[TLB_CORE_N];
+void tlb_emu_hide(u32 asid) {
+  nhidden = 0;
+  if (!asid)
+    return;
+  for (u32 i = TLB_CORE; i < TLB_CORE + TLB_CORE_N; i++) {
+    u32 *e = hidden[nhidden];
+    tlb_read(i, &e[0], &e[1], &e[2], &e[3]);
+    if ((e[2] & e[3] & 1) || (e[1] & 0xFFu) != asid || !((e[2] | e[3]) & 2))
+      continue;
+    tlb_write(i, 0, 0xE0000000u + ((TLB_N + i) << 13), 0, 0);
+    hidden_at[nhidden++] = (u8)i;
+  }
+}
+void tlb_emu_unhide(void) {
+  for (u32 k = 0; k < nhidden; k++)
+    tlb_write(hidden_at[k], hidden[k][0], hidden[k][1], hidden[k][2], hidden[k][3]);
+  nhidden = 0;
 }
 
 /* Does the TLB look at the ASID? Two entries at one address (in the last two

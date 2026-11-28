@@ -5,8 +5,15 @@
    next with mx_loader_launch_beside (or became the service) and goes on
    running.
 
-   All cores are in the TLB at once, each under its ASID (tlb.c keeps the
-   sides' slots), so a switch from one to another is (through the front's):
+   Only the front's core has TLB entries of its own (mx OS plan step 6, part
+   5, 2026-11-27): a side's core is reached by refills (maxsdk's vm.c asks
+   mx__core_pa below), 32 KiB entries of the VM's ring under its ASID, which
+   leave the TLB when the kernel switches away from it (mx__vm_core_out).
+   Its frames stay where they are. Nothing of a side runs at interrupt level
+   (its handlers are out, end.c, and its timers wait: kproc_handler_enter),
+   and what the kernel reads of it there (its copy of the state) it reads
+   through the frames' window. A switch from one to another is (through the
+   front's):
    - the ASID (EntryHi) and mx__core_off;
    - the part of the kernel's state of a program that each has of its own
      (resident.ld's __proc_*: heaps, memory, exceptions, threads, the pad),
@@ -37,6 +44,8 @@ struct kvu0 {
   u32 vf[32][4];
   u32 vi[24];
 } __attribute__((aligned(16)));
+void mx__vm_core_out(void); /* maxsdk's vm.c */
+u32 mx__core_pa(u32 va);
 void kvu0_save(struct kvu0 *to);
 void kvu0_load(const struct kvu0 *from);
 
@@ -49,7 +58,9 @@ struct side {
                 (its address: read only while its ASID is set; threads run
                 in user mode, so not through kseg0): its own while another
                 space is live, the front's while its own is */
-  u32 keep_n, keep_end; /* tlb_core_keep with it (all below it and its own) */
+  u32 keep_end;  /* tlb_core_side with it (the end of its core and of those below) */
+  u32 own_end;   /* the end of its own core */
+  u8 *state_k;   /* state through MX_PHYS_WIN: what the kernel reads at EXL = 1 */
   struct kvu0 vu;
   struct vm_space *space; /* its VM's address space (phase 3a), 0: none */
 };
@@ -70,6 +81,8 @@ static u32 switches;
 /* PCSX2's TLB (tlb.c: the emu build, or the PS2 build where the kernel's
    start found the ASID ignored) */
 extern int tlb_emu;
+void tlb_emu_hide(u32 asid);
+void tlb_emu_unhide(void);
 #define EMU_ASID(a)                                                                        \
   do {                                                                                     \
     if (tlb_emu)                                                                           \
@@ -86,21 +99,26 @@ static void switch_to(int to, int vu) {
     kvu0_load(to >= 0 ? &sides[to]->vu : &vu_front);
   }
   if (loaded >= 0) {
-    /* back to the front's: the side's copy is read at its own addresses */
+    /* back to the front's: the side's core's entries out first (on PCSX2
+       too before the front's are written again) */
     struct side *d = sides[loaded];
-    EMU_ASID(d->asid);
-    end_state_swap(d->state);
+    mx__vm_core_out();
+    end_state_swap(d->state_k);
     mx__asid_set(front_asid);
     mx__core_off = front_core_off;
+    if (tlb_emu)
+      tlb_emu_unhide();
     EMU_ASID(front_asid);
   }
   if (to >= 0) {
     struct side *d = sides[to];
     front_asid = mx__asid, front_core_off = mx__core_off;
+    if (tlb_emu)
+      tlb_emu_hide(front_asid);
     mx__asid_set(d->asid);
     mx__core_off = d->core_off;
     EMU_ASID(d->asid);
-    end_state_swap(d->state);
+    end_state_swap(d->state_k);
   }
   loaded = to;
   /* the VM's address space with it (vm.c: its TLB entries out, its fast
@@ -116,6 +134,17 @@ static int side_of(int proc) {
     if (sides[i]->proc == proc)
       return i;
   return -1;
+}
+
+/* maxsdk's vm.c, at a TLB refill (interrupts off): va's physical address
+   in the core of the side whose space is live, 0 if it is not in one */
+u32 mx__core_pa(u32 va) {
+  if (loaded < 0)
+    return 0;
+  struct side *d = sides[loaded];
+  if (mx__asid != d->asid || va < 0x00100000u || va >= d->own_end)
+    return 0;
+  return va + d->core_off;
 }
 
 /* the last one beside (0: none) */
@@ -145,6 +174,10 @@ int kproc_handler_enter(int proc) {
   if (!nsides)
     return 0;
   int want = side_of(proc);
+  /* a side's core has no entries of its own: nothing of it at interrupt
+     level (a timer of it waits until it is in front again) */
+  if (want >= 0)
+    return -1;
   if (want == loaded || handler_depth == (int)(sizeof handler_prev / sizeof handler_prev[0]))
     return 0;
   handler_prev[handler_depth++] = loaded;
@@ -168,17 +201,18 @@ void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struc
   struct side *d = rec;
   memset(d, 0, sizeof *d);
   sides[nsides] = d;
-  u32 below_n = nsides ? sides[nsides - 1]->keep_n : 0;
   u32 below_end = nsides ? sides[nsides - 1]->keep_end : 0;
   d->proc = proc;
   d->space = space;
   d->asid = mx__asid, d->core_off = mx__core_off;
   d->state = state;
-  d->keep_n = below_n + core_slots;
+  d->state_k = (u8 *)(uintptr_t)(MX_PHYS_WIN + mx_paddr_of(state).v);
+  (void)core_slots; /* its entries are not kept: the next core's take them */
+  d->own_end = core_end;
   d->keep_end = core_end > below_end ? core_end : below_end;
-  tlb_core_keep(d->keep_n, d->keep_end);
+  tlb_core_side(d->keep_end);
   end_reset_state();
-  end_state_swap(d->state);
+  end_state_swap(d->state_k);
   /* the front's space is its, from here: the next program's */
   front_asid = 0, front_core_off = 0;
   memset(&vu_front, 0, sizeof vu_front);
@@ -200,9 +234,9 @@ void kproc_side_end(void) {
   kvu0_load(&d->vu);
   nsides--;
   if (nsides)
-    tlb_core_keep(sides[nsides - 1]->keep_n, sides[nsides - 1]->keep_end);
+    tlb_core_side(sides[nsides - 1]->keep_end);
   else
-    tlb_core_keep(0, 0);
+    tlb_core_side(0);
   mx_irq_restore(was);
 }
 
@@ -221,9 +255,9 @@ void kproc_side_remove(int proc) {
     sides[k] = sides[k + 1];
   nsides--;
   if (nsides)
-    tlb_core_keep(sides[nsides - 1]->keep_n, sides[nsides - 1]->keep_end);
+    tlb_core_side(sides[nsides - 1]->keep_end);
   else
-    tlb_core_keep(0, 0);
+    tlb_core_side(0);
   mx_irq_restore(was);
 }
 
@@ -247,9 +281,9 @@ void kproc_side_front(int proc) {
     sides[k] = sides[k + 1];
   nsides--;
   if (nsides)
-    tlb_core_keep(sides[nsides - 1]->keep_n, sides[nsides - 1]->keep_end);
+    tlb_core_side(sides[nsides - 1]->keep_end);
   else
-    tlb_core_keep(0, 0);
+    tlb_core_side(0);
   mx_irq_restore(was);
 }
 

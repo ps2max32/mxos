@@ -728,8 +728,9 @@ void hang_log(void) {
     struct mx_vm_stats v;
     mx_vm_stats(&v);
     u32 mx__vm_moves(void);
-    con_log(CON_GREY, "VM pool: %u frames, %u free, %u pinned, %u moved", v.frames, v.free_frames,
-            v.pinned_frames, mx__vm_moves());
+    extern u32 mx__vm_core_refills;
+    con_log(CON_GREY, "VM pool: %u frames, %u free, %u pinned, %u moved, %u core refills beside",
+            v.frames, v.free_frames, v.pinned_frames, mx__vm_moves(), mx__vm_core_refills);
     /* who holds them (mx OS plan step 6): the kernel, then each process */
     static struct mx_proc_mem pm[9];
     int n = ptab_memory(pm, 9);
@@ -2014,7 +2015,9 @@ void program_ended(void) {
   screen();
   u32 threads, semas;
   end_ended(&threads, &semas);
-  con_log(CON_GREY, "ended without a restart: %u threads, %u semaphores", threads, semas);
+  extern u32 mx__vm_core_refills;
+  con_log(CON_GREY, "ended without a restart: %u threads, %u semaphores (%u core refills beside)", threads,
+          semas, mx__vm_core_refills);
   u32 n_intc, n_dmac;
   kirq_counts(&n_intc, &n_dmac);
   con_log(CON_GREY, "the kernel first at %u INTC and %u DMAC interrupts (%u others to the BIOS)",

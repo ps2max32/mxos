@@ -330,7 +330,7 @@ u32 tlb_core_plan(u32 bytes, u32 *align);
 void tlb_emu_asid(u32 asid);
 extern int tlb_emu;
 int tlb_ignores_asid(void);
-void tlb_core_keep(u32 n, u32 va_end);
+void tlb_core_side(u32 va_end);
 /* The BIOS's entry for mxlink's code, for a loader that writes there. */
 void tlb_writable(void);
 
