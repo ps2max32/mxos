@@ -738,8 +738,11 @@ void hang_log(void) {
       char name[24] = "the kernel";
       if (pm[i].id)
         ptab_name(pm[i].id, name, sizeof name);
+      u32 runs = pm[i].id ? kproc_side_runs(pm[i].id) : ~0u;
       con_log(CON_GREY, "  %s: core %u (fast %u) pinned %u paged %u frames%s", name, pm[i].core, pm[i].fast,
               pm[i].pinned, pm[i].paged, !pm[i].id ? "" : pm[i].state == MX_PROC_FRONT ? "" : "  (not in front)");
+      if (runs != ~0u)
+        con_log(CON_GREY, "    beside: ran %u times", runs);
     }
   }
   {
@@ -2018,6 +2021,19 @@ void program_ended(void) {
   extern u32 mx__vm_core_refills;
   con_log(CON_GREY, "ended without a restart: %u threads, %u semaphores (%u core refills beside)", threads,
           semas, mx__vm_core_refills);
+  {
+    /* what woke those beside while it was in front (mx OS plan step 6) */
+    static struct mx_proc_mem pm[9];
+    int n = ptab_memory(pm, 9);
+    for (int i = 1; i < n && i < 9; i++) {
+      u32 runs = kproc_side_runs(pm[i].id);
+      char name[24];
+      ptab_name(pm[i].id, name, sizeof name);
+      if (runs != ~0u)
+        con_log(CON_GREY, "  %s beside: ran %u times, core %u pinned %u paged %u frames", name, runs, pm[i].core,
+                pm[i].pinned, pm[i].paged);
+    }
+  }
   u32 n_intc, n_dmac;
   kirq_counts(&n_intc, &n_dmac);
   con_log(CON_GREY, "the kernel first at %u INTC and %u DMAC interrupts (%u others to the BIOS)",

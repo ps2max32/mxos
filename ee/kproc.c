@@ -63,6 +63,7 @@ struct side {
   u8 *state_k;   /* state through MX_PHYS_WIN: what the kernel reads at EXL = 1 */
   struct kvu0 vu;
   struct vm_space *space; /* its VM's address space (phase 3a), 0: none */
+  u32 runs;               /* how often its space was made live (mx OS plan step 6: what wakes it) */
 };
 /* each in its own memory (exec_park's record, reached through MX_PHYS_WIN
    under any ASID), mx OS plan step 4b */
@@ -81,7 +82,7 @@ static u32 switches;
 /* PCSX2's TLB (tlb.c: the emu build, or the PS2 build where the kernel's
    start found the ASID ignored) */
 extern int tlb_emu;
-void tlb_emu_hide(u32 asid);
+void tlb_emu_hide(void);
 void tlb_emu_unhide(void);
 #define EMU_ASID(a)                                                                        \
   do {                                                                                     \
@@ -114,11 +115,12 @@ static void switch_to(int to, int vu) {
     struct side *d = sides[to];
     front_asid = mx__asid, front_core_off = mx__core_off;
     if (tlb_emu)
-      tlb_emu_hide(front_asid);
+      tlb_emu_hide();
     mx__asid_set(d->asid);
     mx__core_off = d->core_off;
     EMU_ASID(d->asid);
     end_state_swap(d->state_k);
+    d->runs++;
   }
   loaded = to;
   /* the VM's address space with it (vm.c: its TLB entries out, its fast
@@ -151,6 +153,11 @@ u32 mx__core_pa(u32 va) {
 int kproc_side(void) { return nsides ? sides[nsides - 1]->proc : 0; }
 int kproc_is_side(int proc) { return side_of(proc) >= 0; }
 u32 kproc_switches(void) { return switches; }
+/* how often process proc ran beside since it went there; ~0u: not beside */
+u32 kproc_side_runs(int proc) {
+  int i = side_of(proc);
+  return i < 0 ? ~0u : sides[i]->runs;
+}
 
 /* ksched_pick, interrupts off: the next thread is of proc */
 void kproc_thread(int proc) {

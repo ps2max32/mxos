@@ -54,6 +54,7 @@ static int free_sema = -1;
 #define NEVENTS 4
 static struct {
   u8 proc, port;
+  u32 hints; /* the hints kmsg_post_all brings it: a bit per MX_EVENT_* (kernel version 52) */
 } evport[NEVENTS];
 
 #define NCHANNELS 4
@@ -274,8 +275,21 @@ int kmsg_events(int port) {
     if (!port)
       r = 0;
     else if (free >= 0)
-      evport[free].proc = (u8)proc, evport[free].port = (u8)port, r = 0;
+      evport[free].proc = (u8)proc, evport[free].port = (u8)port, evport[free].hints = ~0u, r = 0;
   }
+  mx_irq_restore(was);
+  return r;
+}
+
+/* kernel version 52: which hints (kmsg_post_all's) the caller's event port
+   gets, a bit (1u << MX_EVENT_*) each; the events meant for it alone (END,
+   HOME) always come. -1 without an event port. */
+int kmsg_event_mask(u32 hints) {
+  int proc = self_proc(), r = -1;
+  int was = mx_di();
+  for (int i = 0; i < NEVENTS; i++)
+    if (proc > 0 && evport[i].proc == proc)
+      evport[i].hints = hints, r = 0;
   mx_irq_restore(was);
   return r;
 }
@@ -317,14 +331,15 @@ int kmsg_post(int proc, const void *data, u32 len) {
 
 /* An event to every process with an event port (kernel version 26: the
    devices, the notifications), from the command thread: not to one that
-   waits or is paused (it reads the state when it is back), and not again
-   while one of the same type is still in its queue (a hint). */
+   waits or is paused (it reads the state when it is back), not to one
+   that did not ask for this type (kmsg_event_mask), and not again while
+   one of the same type is still in its queue (a hint). */
 void kmsg_post_all(const void *data, u32 len) {
   u32 type = *(const u32 *)data;
   int was = mx_di();
   for (int i = 0; i < NEVENTS; i++) {
     int proc = evport[i].proc, port = evport[i].port;
-    if (!proc || ptab_waiting(proc))
+    if (!proc || ptab_waiting(proc) || type >= 32 || !(evport[i].hints & (1u << type)))
       continue;
     int queued = 0;
     for (int k = 0; k < MX_MSG_SLOTS && !queued; k++)

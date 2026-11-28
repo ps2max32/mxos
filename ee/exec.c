@@ -1022,6 +1022,7 @@ static const struct mxk_services kernel = {
     .front_wait = kproc_front_wait,
     .gfx_gen = end_gfx_gen,
     .proc_in_front = kproc_in_front,
+    .proc_event_mask = kmsg_event_mask,
     .vm_refill_hist = mx__vm_refill_hist,
     .vm_map_file_flags = mx__vm_map_file_flags,
     .proc_memory = ptab_memory,

@@ -233,6 +233,7 @@ struct vm_space *exec_front_space(void);
 void kproc_side_end(void);
 int kproc_side(void);
 u32 kproc_switches(void);
+u32 kproc_side_runs(int proc);
 void end_cleanup(void);
 u32 end_vu_busy(void); /* VPU_STAT when a VU stayed busy at the end (0: none), once */
 void end_kernel_clients(void); /* main.c */
@@ -458,6 +459,7 @@ int kmsg_send(int port, const void *req, u32 len, void *reply, u32 max);
 int kmsg_receive(int port, void *buf, u32 max, struct mx_msg *m);
 int kmsg_reply(int msg, const void *reply, u32 len);
 int kmsg_events(int port);
+int kmsg_event_mask(u32 hints);
 int kmsg_post(int proc, const void *data, u32 len);
 int kmsg_iop_channel(u32 cid, int port);
 int kmsg_host_post(const void *data, u32 len);

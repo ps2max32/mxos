@@ -302,18 +302,18 @@ void tlb_emu_asid(u32 asid) {
 /* PCSX2 again: a side's core has no entries of its own (kproc.c), so its
    addresses would be the front's entries' there, and its threads would run
    in the front's core. While a side's space is live, the front's core
-   entries (asid's, slots 13-20, which the VM's ring never takes) are out,
-   and back at the switch to the front's. Only where tlb_emu is set. */
+   entries (slots 13-20, which the VM's ring never takes) are out, and back
+   at the switch to the front's. All valid ones there, whatever their ASID:
+   while the kernel starts a program they are already the new one's, under
+   an ASID that is not yet the live one. Only where tlb_emu is set. */
 static u32 hidden[TLB_CORE_N][4];
 static u8 nhidden, hidden_at[TLB_CORE_N];
-void tlb_emu_hide(u32 asid) {
+void tlb_emu_hide(void) {
   nhidden = 0;
-  if (!asid)
-    return;
   for (u32 i = TLB_CORE; i < TLB_CORE + TLB_CORE_N; i++) {
     u32 *e = hidden[nhidden];
     tlb_read(i, &e[0], &e[1], &e[2], &e[3]);
-    if ((e[2] & e[3] & 1) || (e[1] & 0xFFu) != asid || !((e[2] | e[3]) & 2))
+    if ((e[2] & e[3] & 1) || !((e[2] | e[3]) & 2))
       continue;
     tlb_write(i, 0, 0xE0000000u + ((TLB_N + i) << 13), 0, 0);
     hidden_at[nhidden++] = (u8)i;
