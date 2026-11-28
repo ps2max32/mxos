@@ -123,12 +123,14 @@ void end_drop(void);
 u32 end_state_size(void);
 void end_state_save(void *to);
 void end_state_load(const void *from);
-void end_state_swap(void *copy);
+void end_state_swap(void *buf);
+u32 end_proc_size(void);
+void end_proc_get(void *buf, const void *copy);
+void end_proc_put(void *copy, const void *buf);
 void end_unpark_beside(void);
 /* kproc.c: a process beside the one in front (step 2e-2) */
 struct vm_space;
-void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struct vm_space *space,
-                      void *rec);
+void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struct vm_space *space);
 u32 kproc_rec_size(void);
 /* vm.c's address spaces (mx OS plan, phase 3a) */
 struct vm_space *mx__vm_space_new(u32 size);

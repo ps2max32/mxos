@@ -616,7 +616,7 @@ int exec_park(int beside) {
      goes on with its own part of it (kproc_side_begin) */
   if (beside) {
     kproc_side_begin(ksched_thread_proc(mx_bios_get_thread_id()), q->state, core_slots, core_end,
-                     q->space, win + n_slot + n_end);
+                     q->space);
   } else
     end_reset_state();
   user_tid = 0, shell = 0, on_libmxk = 0, core_moved = 0;

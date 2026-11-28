@@ -11,14 +11,15 @@
    leave the TLB when the kernel switches away from it (mx__vm_core_out).
    Its frames stay where they are. Nothing of a side runs at interrupt level
    (its handlers are out, end.c, and its timers wait: kproc_handler_enter),
-   and what the kernel reads of it there (its copy of the state) it reads
-   through the frames' window. A switch from one to another is (through the
-   front's):
+   and what a switch reads and writes of it is in the kernel's memory (its
+   record here, side_mem, since 2026-11-28), none in its own. A switch from
+   one to another is (through the front's):
    - the ASID (EntryHi) and mx__core_off;
    - the part of the kernel's state of a program that each has of its own
      (resident.ld's __proc_*: heaps, memory, exceptions, threads, the pad),
-     exchanged with the side's copy (end_state_swap); the rest (the VM, the
-     image, the home menu) is the one in front's;
+     exchanged with the side's record (end_state_swap; into its whole copy,
+     in its core, when it leaves the list); the rest (the VM, the image, the
+     home menu) is the one in front's;
    - VU0's registers (kvu0.S), at a switch between threads only.
    The scheduler switches when the next thread is the other's (ksched_pick):
    the side's threads run in its space, the others (the kernel's included,
@@ -51,25 +52,30 @@ void kvu0_load(const struct kvu0 *from);
 
 /* those beside, a stack as exec.c's parks (a service, one above it) */
 #define MAX_SIDES 4
+/* what a process beside has of its own in the kernel's state (end.c, the
+   __proc_* of resident.ld): at most this much (resident.ld checks it) */
+#define SIDE_STATE 4096
 struct side {
   int proc;
   u32 asid, core_off;
-  u8 *state; /* its copy of the kernel's state of a program, in its core
-                (its address: read only while its ASID is set; threads run
-                in user mode, so not through kseg0): its own while another
-                space is live, the front's while its own is */
+  u8 *state; /* its whole copy of the kernel's state, in its core (exec_park's
+                record, through MX_PHYS_WIN): read again when it is in front */
   u32 keep_end;  /* tlb_core_side with it (the end of its core and of those below) */
   u32 own_end;   /* the end of its own core */
-  u8 *state_k;   /* state through MX_PHYS_WIN: what the kernel reads at EXL = 1 */
   struct kvu0 vu;
   struct vm_space *space; /* its VM's address space (phase 3a), 0: none */
   u32 runs;               /* how often its space was made live (mx OS plan step 6: what wakes it) */
+  /* its part of the kernel's state while another's is live, the other's
+     while its own is (end_state_swap) */
+  u8 ps[SIDE_STATE] __attribute__((aligned(16)));
 };
-/* each in its own memory (exec_park's record, reached through MX_PHYS_WIN
-   under any ASID), mx OS plan step 4b */
+/* in the kernel's memory (mx OS plan step 6): a switch, at interrupt level,
+   reads and writes nothing of a side's own memory, which may be paged out */
+static struct side side_mem[MAX_SIDES];
 static struct side *sides[MAX_SIDES];
 static int nsides;
-u32 kproc_rec_size(void) { return (sizeof(struct side) + 63) & ~63u; }
+/* a paused program's VU0 registers, in exec.c's record (step 4d) */
+u32 kproc_rec_size(void) { return (sizeof(struct kvu0) + 63) & ~63u; }
 static int loaded = -1; /* the side whose space, state and VU0 are live; -1 the front's */
 /* the spaces handlers left, the last one's on top: a handler entered inside
    another (the kernel's timer handler runs in the front's, and a process's
@@ -104,7 +110,7 @@ static void switch_to(int to, int vu) {
        too before the front's are written again) */
     struct side *d = sides[loaded];
     mx__vm_core_out();
-    end_state_swap(d->state_k);
+    end_state_swap(d->ps);
     mx__asid_set(front_asid);
     mx__core_off = front_core_off;
     if (tlb_emu)
@@ -119,7 +125,7 @@ static void switch_to(int to, int vu) {
     mx__asid_set(d->asid);
     mx__core_off = d->core_off;
     EMU_ASID(d->asid);
-    end_state_swap(d->state_k);
+    end_state_swap(d->ps);
     d->runs++;
   }
   loaded = to;
@@ -201,25 +207,30 @@ void kproc_handler_leave(void) {
    front's new one, as linked, and the side's part of it its own again at
    once, the thread going on. Its core's TLB entries (core_slots, after
    those of the sides below it) kept. */
-void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struct vm_space *space,
-                      void *rec) {
+void kproc_side_begin(int proc, void *state, u32 core_slots, u32 core_end, struct vm_space *space) {
   int was = mx_di();
   switch_to(-1, 1); /* its thread is the front's: so it is already */
-  struct side *d = rec;
-  memset(d, 0, sizeof *d);
+  struct side *d = 0;
+  for (int i = 0; i < MAX_SIDES && !d; i++) {
+    d = &side_mem[i];
+    for (int k = 0; k < nsides; k++)
+      if (sides[k] == d)
+        d = 0;
+  }
+  memset(d, 0, sizeof *d - sizeof d->ps);
   sides[nsides] = d;
   u32 below_end = nsides ? sides[nsides - 1]->keep_end : 0;
   d->proc = proc;
   d->space = space;
   d->asid = mx__asid, d->core_off = mx__core_off;
-  d->state = state;
-  d->state_k = (u8 *)(uintptr_t)(MX_PHYS_WIN + mx_paddr_of(state).v);
+  d->state = (u8 *)(uintptr_t)(MX_PHYS_WIN + mx_paddr_of(state).v);
+  end_proc_get(d->ps, d->state);
   (void)core_slots; /* its entries are not kept: the next core's take them */
   d->own_end = core_end;
   d->keep_end = core_end > below_end ? core_end : below_end;
   tlb_core_side(d->keep_end);
   end_reset_state();
-  end_state_swap(d->state_k);
+  end_state_swap(d->ps);
   /* the front's space is its, from here: the next program's */
   front_asid = 0, front_core_off = 0;
   memset(&vu_front, 0, sizeof vu_front);
@@ -238,6 +249,7 @@ void kproc_side_end(void) {
   struct side *d = sides[nsides - 1];
   ksched_proc_hold(d->proc, 1);
   switch_to(-1, 1);
+  end_proc_put(d->state, d->ps); /* its own part into its copy: exec.c loads that */
   kvu0_load(&d->vu);
   nsides--;
   if (nsides)
@@ -270,8 +282,8 @@ void kproc_side_remove(int proc) {
 
 /* step 4d: VU0's registers of a program paused in front into its record's
    kproc.c part, and back (the record through MX_PHYS_WIN) */
-void kproc_vu_save(void *rec) { kvu0_save(&((struct side *)rec)->vu); }
-void kproc_vu_load(void *rec) { kvu0_load(&((struct side *)rec)->vu); }
+void kproc_vu_save(void *rec) { kvu0_save((struct kvu0 *)rec); }
+void kproc_vu_load(void *rec) { kvu0_load((const struct kvu0 *)rec); }
 
 /* step 4d: a process beside comes in front (exec_front_switch, the command
    thread): out of the list, its threads running in the front's space from
@@ -283,6 +295,7 @@ void kproc_side_front(int proc) {
     return;
   int was = mx_di();
   switch_to(-1, 1);
+  end_proc_put(sides[i]->state, sides[i]->ps); /* its own part into its copy: exec.c loads that */
   kvu0_load(&sides[i]->vu); /* its VU0 registers live: it is the front's now */
   for (int k = i; k + 1 < nsides; k++)
     sides[k] = sides[k + 1];

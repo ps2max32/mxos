@@ -154,4 +154,6 @@ SECTIONS {
 }
 
 ASSERT(_end <= __stack, "the kernel's data leaves no room for its stack")
+ASSERT(__proc_data_end - __proc_data_start + __proc_bss_end - __proc_bss_start <= 4096,
+       "a side's part of the kernel's state is over kproc.c's SIDE_STATE")
 ASSERT(__loaded_end <= __mx_top - 0x40000, "the kernel's loaded data reaches where mxboot runs")

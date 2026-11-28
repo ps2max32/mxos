@@ -508,7 +508,8 @@ void end_state_save(void *to) {
               __vm_bss_start, __vm_bss_end);
 }
 /* A process beside the one in front (kproc.c): its part of the state
-   (__proc_*) exchanged with the live one, at the same place in the copy. */
+   (__proc_*), kept in the kernel's memory (its side record, packed: the
+   data, then the bss) and exchanged with the live one at a switch. */
 static void swap_words(u32 *a, u32 *b, u32 bytes) {
   for (u32 i = 0; i < bytes / 4; i++) {
     u32 t = a[i];
@@ -517,13 +518,27 @@ static void swap_words(u32 *a, u32 *b, u32 bytes) {
   }
 }
 extern char __proc_data_start[], __proc_data_end[], __proc_bss_start[], __proc_bss_end[];
-void end_state_swap(void *copy) {
-  u8 *c = copy;
+#define PROC_D ((u32)(__proc_data_end - __proc_data_start))
+#define PROC_B ((u32)(__proc_bss_end - __proc_bss_start))
+u32 end_proc_size(void) { return PROC_D + PROC_B; }
+void end_state_swap(void *buf) {
+  u8 *c = buf;
+  swap_words((u32 *)__proc_data_start, (u32 *)c, PROC_D);
+  swap_words((u32 *)__proc_bss_start, (u32 *)(c + PROC_D), PROC_B);
+}
+/* that part of a whole copy (end_state_save's) into buf, and back */
+static u8 *proc_in(const void *copy, int bss) {
   u32 d = (u32)(__prog_data_end - __prog_data_start);
-  swap_words((u32 *)__proc_data_start, (u32 *)(c + (__proc_data_start - __prog_data_start)),
-             (u32)(__proc_data_end - __proc_data_start));
-  swap_words((u32 *)__proc_bss_start, (u32 *)(c + d + (__proc_bss_start - __prog_bss_start)),
-             (u32)(__proc_bss_end - __proc_bss_start));
+  return (u8 *)copy + (bss ? d + (u32)(__proc_bss_start - __prog_bss_start)
+                           : (u32)(__proc_data_start - __prog_data_start));
+}
+void end_proc_get(void *buf, const void *copy) {
+  memcpy(buf, proc_in(copy, 0), PROC_D);
+  memcpy((u8 *)buf + PROC_D, proc_in(copy, 1), PROC_B);
+}
+void end_proc_put(void *copy, const void *buf) {
+  memcpy(proc_in(copy, 0), buf, PROC_D);
+  memcpy(proc_in(copy, 1), (const u8 *)buf + PROC_D, PROC_B);
 }
 void end_state_load(const void *from) {
   u32 d = (u32)(__prog_data_end - __prog_data_start);
